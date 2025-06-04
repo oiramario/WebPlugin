@@ -1,0 +1,10 @@
+LIBRARY "ID_WebP.apl"
+EXPORTS
+    IDP_Init
+    IDP_GetPlugInInfo
+    IDP_ShowPlugInDialog
+    IDP_OpenImage
+    IDP_CloseImage
+    IDP_GetImageInfo
+    IDP_GetPageInfo
+    IDP_PageDecode
