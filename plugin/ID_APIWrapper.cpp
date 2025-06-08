@@ -8,7 +8,7 @@ HMODULE ID_APIWrapper::g_hModule = NULL;
 
 ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* pci)
 :   m_WebPFormatInfo {
-        .dwFlags = 0,
+        .dwFlags = CIF_REGISTERED,
         .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
         .szName = "WebP Format",
         .szNameShort = "WEBP",
