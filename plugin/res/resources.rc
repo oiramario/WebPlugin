@@ -1,0 +1,52 @@
+#include "resource.h"
+#include <windows.h>
+
+IDI_ICON_WEBP ICON "webp.ico"
+
+STRINGTABLE
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+{
+    IDS_VERSION, 	"1.0.29"
+}
+
+IDD_ABOUT DIALOG 0, 0, 127, 113
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "关于 ID_WebP"
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+FONT 9, "宋体"
+{
+    CONTROL "OK", 1, BUTTON, BS_DEFPUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 38, 93, 50, 14
+    CONTROL "(c) 2025 MasterZ", -1, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE | WS_GROUP, 21, 62, 88, 8
+    CONTROL "WebP 图像解码插件", -1, BUTTON, BS_GROUPBOX | WS_CHILD | WS_VISIBLE, 10, 8, 108, 78
+    CONTROL "版本 %s", IDC_VERSION, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE | WS_GROUP, 23, 21, 81, 8
+    CONTROL IDI_ICON_WEBP, -1, STATIC, SS_ICON | WS_CHILD | WS_VISIBLE, 53, 36, 20, 20
+    CONTROL "作者: oiramario", -1, STATIC, SS_LEFT | WS_CHILD | WS_VISIBLE | WS_GROUP, 31, 72, 71, 8
+}
+
+
+1 VERSIONINFO
+FILEVERSION 1,0,29,0
+PRODUCTVERSION 1,0,29,0
+FILEOS 0x40004
+FILETYPE 0x2
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "040904b0"
+        {
+            VALUE "CompanyName", "ACD Systems, Ltd."
+            VALUE "FileDescription", "ID_WEBP"
+            VALUE "FileVersion", "1,0,29,0"
+            VALUE "InternalName", "ID_WEBP"
+            VALUE "LegalCopyright", "Copyright \xA9 2013 ACD Systems, Ltd."
+            VALUE "OriginalFilename", "ID_WEBP.apl"
+            VALUE "ProductName", "ID_WEBP"
+            VALUE "ProductVersion", "1,0,29,0"
+        }
+    }
+
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x0409 0x04B0  
+    }
+}

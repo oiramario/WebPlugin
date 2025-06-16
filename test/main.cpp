@@ -1,9 +1,7 @@
 ﻿#include <iostream>
 #include <fstream>
 #include "WebPDecoder.h"
-
 #include <windows.h>
-#include <fstream>
 
 bool SaveDIBToBMP(HGLOBAL hDIB, const char* filePath);
 

@@ -193,12 +193,12 @@ struct ID_FormatInfo
 // the plug-in library is unloaded.
 struct ID_PlugInInfo
 {
-   DWORD            dwFlags;     // Flags -- set to 0
-   int              nVersion;    // Plug-in specificiation version (100)
-   char             szTitle[40]; // Plug-in title
-   UINT             iIcon;       // Plug-in icon resource id
-   int              nFormats;    // Number of formats supported by plug-in
-   ID_FormatInfo*   pFormatInfo; // Information about each format supported
+    DWORD            dwFlags;     // Flags -- set to 0
+    int              nVersion;    // Plug-in specificiation version (100)
+    char             szTitle[40]; // Plug-in title
+    UINT             iIcon;       // Plug-in icon resource id
+    int              nFormats;    // Number of formats supported by plug-in
+    ID_FormatInfo*   pFormatInfo; // Information about each format supported
 };
 
 //////////////////
@@ -213,8 +213,6 @@ struct ID_ImageInfo
     int         nBPS;             // bits per sample
     int         nSPP;             // samples per pixel
     int         nPages;           // number of pages
-    int         nMetadataTypes;   // Page has n Types of Metadata, valid if PPF_METADATATYPES
-    HGLOBAL     hMetadataTypes;   // GUID array of metadata types on page, valid if PPF_METADATATYPES
 };
 
 ///////////////////
@@ -252,14 +250,6 @@ struct ID_PageInfo
     int         nSPP;             // Samples per pixel
     int         nDelay;           // Frame delay in ms (for animation)
     char        szTitle[32];      // Page title 
-
-    union
-    {
-        SIZE    siDPI;            // Image resolution in DPI (valid only if the PPF_DPI flag is given)
-        int     iTransColor;      // Transparent colour index (valid only if PPF_TRANSCOLOR flag is given)
-    };
-    int         nMetadataTypes;   // Page has n Types of Metadata, valid if PPF_METADATATYPES
-    HGLOBAL     hMetadataTypes;   // GUID array of metadata types on page, valid if PPF_METADATATYPES
 };
 
 /////////////////

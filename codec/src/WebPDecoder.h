@@ -4,6 +4,11 @@
 #include <vector>
 #include <string>
 
+struct Frame {
+    std::vector<uint8_t>    data;
+    int                     delay;
+};
+
 class WebPDecoder {
 public:
     // 构造函数：接收WebP数据和大小
@@ -19,8 +24,7 @@ public:
     bool hasAlpha() const { return has_alpha_; }
     int getWidth() const { return width_; }
     int getHeight() const { return height_; }
-    const std::vector<void*>& getFrames() const { return frames_; }
-    const std::vector<int>& getDurations() const { return durations_; }
+    const std::vector<Frame>& getFrames() const { return frames_; }
     
     // 获取错误信息
     std::string getError() const { return error_msg_; }
@@ -30,8 +34,7 @@ private:
     bool has_alpha_;            // 是否有Alpha通道
     int width_;                 // 图像宽度
     int height_;                // 图像高度
-    std::vector<void*> frames_;  // 帧数据
-    std::vector<int> durations_; // 帧持续时间
+    std::vector<Frame> frames_;  // 帧数据
     std::string error_msg_;     // 错误信息
     
     // 设置错误信息

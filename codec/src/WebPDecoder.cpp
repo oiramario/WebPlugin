@@ -9,18 +9,12 @@ WebPDecoder::WebPDecoder()
 }
 
 WebPDecoder::~WebPDecoder() {
-    for (auto& hDIB : frames_) {
-        GlobalFree(hDIB);
-    }
+    frames_.clear();
 }
 
 bool WebPDecoder::decode(const uint8_t* data, size_t size) {
     // 清空之前的结果
-    for (auto& hDIB : frames_) {
-        GlobalFree(hDIB);
-    }
     frames_.clear();
-    durations_.clear();
 
     // 获取图像特征
     WebPBitstreamFeatures features;
@@ -34,12 +28,12 @@ bool WebPDecoder::decode(const uint8_t* data, size_t size) {
     has_alpha_ = (features.has_alpha != 0);
     has_animation_ = features.has_animation;
 
-    int bytesPerPixel = has_alpha_ ? 4 : 3;
+    int bytesPerPixel = has_animation_ ? 4 : (has_alpha_ ? 4 : 3);
     int stride = ((width_ * bytesPerPixel + 3) / 4) * 4;  // 4字节对齐
     int imageSize = stride * height_;
 
     // 创建DIB辅助函数
-    auto createDIB = [&](const uint8_t* pixelData) -> HGLOBAL {
+    auto createDIB = [&](const uint8_t* pixelData) -> std::vector<uint8_t> {
         // 创建DIB
         BITMAPINFOHEADER bih = {0};
         bih.biSize = sizeof(BITMAPINFOHEADER);
@@ -50,30 +44,20 @@ bool WebPDecoder::decode(const uint8_t* data, size_t size) {
         bih.biCompression = BI_RGB;
 
         // 分配内存
-        HGLOBAL hDIB = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + imageSize);
-        if (!hDIB)
-            return nullptr;
-        
-        BITMAPINFOHEADER* pBIH = (BITMAPINFOHEADER*)GlobalLock(hDIB);
-        if (!pBIH) {
-            GlobalFree(hDIB);
-            return nullptr;
-        }
+        std::vector<uint8_t> data(sizeof(BITMAPINFOHEADER) + imageSize);
         
         // 复制位图信息头
-        memcpy(pBIH, &bih, sizeof(BITMAPINFOHEADER));
+        memcpy(&data[0], &bih, sizeof(BITMAPINFOHEADER));
 
         // 复制像素数据（垂直翻转，因为Windows DIB是从下到上存储的）
-        uint8_t* pPixels = (uint8_t*)pBIH + sizeof(BITMAPINFOHEADER);
+        uint8_t* pPixels = (uint8_t*)(&data[0]) + sizeof(BITMAPINFOHEADER);
         for (int y = 0; y < height_; y++) {
             memcpy(pPixels + (height_ - 1 - y) * stride, 
                 pixelData + y * width_ * bytesPerPixel, 
                 width_ * bytesPerPixel);
         }
 
-        GlobalUnlock(hDIB);
-
-        return hDIB;
+        return data;
     };
 
     if (has_animation_) {
@@ -98,22 +82,14 @@ bool WebPDecoder::decode(const uint8_t* data, size_t size) {
         }
 
         // 解码每一帧
-        while (WebPAnimDecoderHasMoreFrames(dec)) {
-            uint8_t* rgba;
-            int timestamp;
-            
-            if (!WebPAnimDecoderGetNext(dec, &rgba, &timestamp)) {
-                break;
-            }
-            
+        uint8_t* pixels = nullptr;
+        int timestamp = 0;
+        while (WebPAnimDecoderGetNext(dec, &pixels, &timestamp)) {
             // 创建DIB
-            HGLOBAL hDIB = createDIB(rgba);
-            if (hDIB) {
-                frames_.push_back(hDIB);
-                durations_.push_back(timestamp);
-            }
+            std::vector<uint8_t> data = createDIB(pixels);
+            Frame frame = { data, timestamp };
+            frames_.push_back(frame);
         }
-
         // 清理资源
         WebPAnimDecoderDelete(dec);
 
@@ -125,25 +101,19 @@ bool WebPDecoder::decode(const uint8_t* data, size_t size) {
     }
     else {
         // 静态图像解码
-        uint8_t* bgr = WebPDecodeBGR(data, size, 0, 0);
-        if (!bgr) {
+        uint8_t* pixels = WebPDecodeBGR(data, size, 0, 0);
+        if (!pixels) {
             setError("Failed to decode WebP image");
             return false;
         }
 
         // 创建DIB
-        HGLOBAL hDIB = createDIB(bgr);
-        if (hDIB) {
-            frames_.push_back(hDIB);
-            durations_.push_back(0);
-        } else {
-            setError("Failed to create DIB");
-            WebPFree(bgr);
-            return false;
-        }
+        std::vector<uint8_t> data = createDIB(pixels);
+        Frame frame = { data, 0 };
+        frames_.push_back(frame);
 
         // 释放解码结果
-        WebPFree(bgr);
+        WebPFree(pixels);
     }
 
     return true;
