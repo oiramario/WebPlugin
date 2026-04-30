@@ -22,4 +22,4 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION lib)
-install(FILES WebPDecodec.h DESTINATION include)
+install(FILES WebPDecoder.h DESTINATION include)

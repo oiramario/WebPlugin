@@ -6,7 +6,7 @@
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${command:cmake.launchTargetPath}",
-            "args": ["D:\\acdsee\\animated-gif-0.webp"],
+            "args": ["D:\\acdsee\\bones-17547.webp"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

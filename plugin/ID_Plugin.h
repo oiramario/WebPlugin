@@ -194,7 +194,7 @@ struct ID_FormatInfo
 struct ID_PlugInInfo
 {
     DWORD            dwFlags;     // Flags -- set to 0
-    int              nVersion;    // Plug-in specificiation version (100)
+    int              nVersion;    // Plug-in specification version (ID_VERSION)
     char             szTitle[40]; // Plug-in title
     UINT             iIcon;       // Plug-in icon resource id
     int              nFormats;    // Number of formats supported by plug-in
@@ -215,12 +215,21 @@ struct ID_ImageInfo
     int         nPages;           // number of pages
 };
 
+/////////////////
+// SIF_* flags //
+/////////////////
+enum
+{
+    SIF_FILENAME = 1,  // pszFN is valid and contains the image file path
+    SIF_BUFFER   = 2,  // pBuf / dwLen contain the full image data in memory
+};
+
 ///////////////////
 // ID_SourceInfo //
 ///////////////////
 // Defines the image source data.
-// The archive plug-in must make a copy of the content of ID_SourceInfo.
-// It may not retain a pointer to either ID_SourceInfo or its pszFN member
+// The plug-in must make a copy of the content of ID_SourceInfo.
+// It may not retain a pointer to either ID_SourceInfo or its pszFN member.
 struct ID_SourceInfo
 {
    ID_SourceInfo() { ZeroMemory(this, sizeof(*this)); };
@@ -229,17 +238,17 @@ struct ID_SourceInfo
    char*    pszFN;   // Name of image file, if applicable (can be NULL).
    BYTE*    pBuf;    // Pointer to image file data
    DWORD    dwLen;   // Byte length of image file
-    
-                     // Call-back function to read more data info buffer. 
-                     // The function attempts to read as much additional data into buf as
-                     // necessary to make dwBufRead at least as large as dwPos.
+
+                     // Callback to request the host to extend the file buffer.
+                     // The host will attempt to load data up to byte position dwPos
+                     // into pBuf and stores the new buffer length in *pdwNewPos.
                      // Returns TRUE if successful, FALSE otherwise.
    BOOL(*pfFillBuffer)(void* pUserParam, DWORD dwPos, DWORD* pdwNewPos);
-   void* pParam;     // Calling application can set this to whatever it likes
+   void* pParam;     // Passed as pUserParam to pfFillBuffer
 };
 
 //////////////////
-// IDP_PageInfo //
+// ID_PageInfo  //
 //////////////////
 // Information about a page of an image.
 struct ID_PageInfo
@@ -311,7 +320,7 @@ struct ID_OutputParam
    RECT				rc;             // Region of source page to be decoded, in source pixels (if POF_RECT specified)
    int				nWidth;         // Output width
    int				nHeight;        // Output height
-   int				bpp;            // Output bits per pixel (1, 4, 8, 16 or 24)
+   int				bpp;            // Output bits per pixel (1, 4, 8, 16, 24 or 32)
    int				nColorMapLen;   // #Entries in output colormap
    RGBQUAD			colormap[256];  // Output colormap   
 };
