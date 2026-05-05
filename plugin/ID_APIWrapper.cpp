@@ -75,7 +75,11 @@ int ID_APIWrapper::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
         psi->pfFillBuffer(psi->pParam, psi->dwLen, &dwNewPos);
     }
 
-    WebPDecoder* decoder = new WebPDecoder;
+    WebPDecoder* decoder = new (std::nothrow) WebPDecoder;
+    if (!decoder) {
+        return IDE_Error;
+    }
+
     if (!decoder->decode(psi->pBuf, psi->dwLen))
     {
         delete decoder;
@@ -102,7 +106,7 @@ int ID_APIWrapper::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
     if (hs)
     {
         WebPDecoder* decoder = (WebPDecoder*)hs;
-        if (decoder->getFrames().empty())
+        if (decoder->getFrameCount() == 0)
         {
             return IDE_CorruptData;
         }
@@ -111,9 +115,9 @@ int ID_APIWrapper::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
         pii->dwFormatID = MAKE_FORMATID('W', 'E', 'B', 'P');
         pii->si.cx = decoder->getWidth();
         pii->si.cy = decoder->getHeight();
-        pii->nBPS = 8;
+        pii->nBPS = decoder->getBitsPerSample();
         pii->nSPP = decoder->hasAnimated() ? 3 : (decoder->hasAlpha() ? 4 : 3);
-        pii->nPages = int(decoder->getFrames().size());
+        pii->nPages = decoder->getFrameCount();
 
         return IDE_OK;
     }
@@ -128,7 +132,7 @@ int ID_APIWrapper::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
     if (hs)
     {
         WebPDecoder* decoder = (WebPDecoder*)hs;
-        int nPages = int(decoder->getFrames().size());
+        int nPages = decoder->getFrameCount();
         if (iPage < 0 || iPage >= nPages) {
             return IDE_NoPage;
         }
@@ -142,13 +146,9 @@ int ID_APIWrapper::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
         }
         ppi->si.cx = decoder->getWidth();
         ppi->si.cy = decoder->getHeight();
-        ppi->nBPS = 8;
-        ppi->nDelay = decoder->getFrames()[iPage].delay;
+        ppi->nBPS = decoder->getBitsPerSample();
+        ppi->nDelay = decoder->getFrameDelay(iPage);
         ppi->szTitle[0] = 0;
-
-        // char msg[256] = {0};
-        // sprintf_s(msg, 256, "dwFlags=%d, nDelay=%d, iPage=%d", ppi->dwFlags, ppi->nDelay, iPage);
-        // MessageBox(NULL, msg, "IDP_GetPageInfo", MB_OK);
 
         return IDE_OK;
     }
@@ -163,71 +163,43 @@ int ID_APIWrapper::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* 
     if (!hs) return IDE_InvalidParam;
 
     WebPDecoder* decoder = (WebPDecoder*)hs;
-    const auto& frames = decoder->getFrames();
-    int nPages = int(frames.size());
+    int nPages = decoder->getFrameCount();
     if (pdp->nPage < 0 || pdp->nPage >= nPages) {
         return IDE_NoPage;
     }
 
-    auto& frame = frames[pdp->nPage];
-    auto data = frame.data.data();
-    auto size = frame.data.size();
+    const int width  = decoder->getWidth();
+    const int height = decoder->getHeight();
+    const int bytesPerPixel = decoder->hasAnimated() ? 3
+                            : decoder->hasAlpha()    ? 4 : 3;
 
-    HGLOBAL hDIB = NULL;
+    auto& frame = decoder->getFrame(pdp->nPage);
+    const int imageSize = static_cast<int>(frame.data.size());
 
-    if (decoder->hasAnimated()) {
-        // ACDSee Pro 5 misrenders 32bpp DIBs in multi-page preview (yellow/cyan/red stripes).
-        // Convert BGRA→BGR (strip alpha) for compatibility.
-        BITMAPINFOHEADER* pBih = (BITMAPINFOHEADER*)data;
-        int w = pBih->biWidth;
-        int h = abs(pBih->biHeight);
-        int srcStride = ((w * 32 + 31) / 32) * 4;  // 32bpp
-        int dstStride = ((w * 24 + 31) / 32) * 4;  // 24bpp
+    HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, sizeof(BITMAPINFOHEADER) + imageSize);
+    if (!hDIB) return IDE_Error;
 
-        DWORD dstSize = sizeof(BITMAPINFOHEADER) + dstStride * h;
-        hDIB = GlobalAlloc(GMEM_MOVEABLE, dstSize);
-        if (!hDIB) return IDE_Error;
+    // Write BITMAPINFOHEADER (positive = bottom-up, Frame 已存储为 bottom-up 且 stride 对齐)
+    BITMAPINFOHEADER bih = {0};
+    bih.biSize        = sizeof(BITMAPINFOHEADER);
+    bih.biWidth       = width;
+    bih.biHeight      = height;
+    bih.biPlanes      = 1;
+    bih.biBitCount    = bytesPerPixel * 8;
+    bih.biCompression = BI_RGB;
+    bih.biSizeImage   = imageSize;
+    memcpy(hDIB, &bih, sizeof(BITMAPINFOHEADER));
 
-        uint8_t* pDIB = (uint8_t*)GlobalLock(hDIB);
-        if (!pDIB) { GlobalFree(hDIB); return IDE_Error; }
-
-        memcpy(pDIB, data, sizeof(BITMAPINFOHEADER));
-        ((BITMAPINFOHEADER*)pDIB)->biBitCount = 24;
-        ((BITMAPINFOHEADER*)pDIB)->biSizeImage = dstStride * h;
-
-        const uint8_t* pSrc = data + sizeof(BITMAPINFOHEADER);
-        uint8_t* pDst = pDIB + sizeof(BITMAPINFOHEADER);
-        for (int y = 0; y < h; y++) {
-            const uint8_t* sp = pSrc + y * srcStride;
-            uint8_t* dp = pDst + y * dstStride;
-            for (int x = 0; x < w; x++) {
-                dp[0] = sp[0]; // B
-                dp[1] = sp[1]; // G
-                dp[2] = sp[2]; // R
-                sp += 4;
-                dp += 3;
-            }
-        }
-
-        GlobalUnlock(hDIB);
-    } else {
-        hDIB = GlobalAlloc(GMEM_MOVEABLE, size);
-        if (!hDIB) return IDE_Error;
-        uint8_t* pMem = (uint8_t*)GlobalLock(hDIB);
-        if (!pMem) { GlobalFree(hDIB); return IDE_Error; }
-        memcpy(pMem, data, size);
-        GlobalUnlock(hDIB);
-    }
+    memcpy((uint8_t*)hDIB + sizeof(BITMAPINFOHEADER), frame.data.data(), imageSize);
 
     pio->dwFlags = 0;
     pio->hdib = hDIB;
     pio->hemf = NULL;
     pio->rc.left = 0;
     pio->rc.top = 0;
-    pio->rc.right = decoder->getWidth();
-    pio->rc.bottom = decoder->getHeight();
+    pio->rc.right = width;
+    pio->rc.bottom = height;
     pio->pParamEx = NULL;
 
     return IDE_OK;
 }
-
