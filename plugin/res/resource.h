@@ -6,6 +6,6 @@
 #define IDC_VERSION     301
 #define IDI_ICON_WEBP   401
 
-#define VER_STR "1.0.31"
+#define VER_STR "1.0.32"
 
 #endif

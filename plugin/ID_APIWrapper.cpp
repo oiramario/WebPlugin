@@ -33,6 +33,16 @@ ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* pci)
     m_ClientInfo.dwFlags = pci->dwFlags;
     strcpy_s(m_ClientInfo.szAppName, pci->szAppName);
     strcpy_s(m_ClientInfo.szCompany, pci->szCompany);
+
+    // Force disable "Sharpen subsampled images" which causes hang
+    // on large animated WebP (takes effect next ACDSee launch)
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\ACD Systems\\ACDSee Pro\\50",
+            0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        DWORD val = 0;
+        RegSetValueExA(hKey, "ViewerSharpen", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+        RegCloseKey(hKey);
+    }
 }
 
 ID_APIWrapper::~ID_APIWrapper()
@@ -116,7 +126,7 @@ int ID_APIWrapper::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
         pii->si.cx = decoder->getWidth();
         pii->si.cy = decoder->getHeight();
         pii->nBPS = decoder->getBitsPerSample();
-        pii->nSPP = decoder->hasAnimated() ? 3 : (decoder->hasAlpha() ? 4 : 3);
+        pii->nSPP = 3;
         pii->nPages = decoder->getFrameCount();
 
         return IDE_OK;
@@ -141,8 +151,8 @@ int ID_APIWrapper::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
             ppi->dwFlags = PPF_RGB;
             ppi->nSPP = 3;
         } else {
-            ppi->dwFlags = decoder->hasAlpha() ? PPF_RGB | PPF_ALPHA : PPF_RGB;
-            ppi->nSPP = decoder->hasAlpha() ? 4 : 3;
+            ppi->dwFlags = PPF_RGB;
+            ppi->nSPP = 3;
         }
         ppi->si.cx = decoder->getWidth();
         ppi->si.cy = decoder->getHeight();
@@ -170,16 +180,19 @@ int ID_APIWrapper::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* 
 
     const int width  = decoder->getWidth();
     const int height = decoder->getHeight();
-    const int bytesPerPixel = decoder->hasAnimated() ? 3
-                            : decoder->hasAlpha()    ? 4 : 3;
+    const int bytesPerPixel = 3;
 
     auto& frame = decoder->getFrame(pdp->nPage);
-    const int imageSize = static_cast<int>(frame.data.size());
+
+    int rowBytes = width * bytesPerPixel;
+    int stride   = ((rowBytes + 3) / 4) * 4;
+    int imageSize = stride * height;
 
     HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, sizeof(BITMAPINFOHEADER) + imageSize);
-    if (!hDIB) return IDE_Error;
+    if (!hDIB) {
+        return IDE_Error;
+    }
 
-    // Write BITMAPINFOHEADER (positive = bottom-up, Frame 已存储为 bottom-up 且 stride 对齐)
     BITMAPINFOHEADER bih = {0};
     bih.biSize        = sizeof(BITMAPINFOHEADER);
     bih.biWidth       = width;
@@ -190,7 +203,9 @@ int ID_APIWrapper::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* 
     bih.biSizeImage   = imageSize;
     memcpy(hDIB, &bih, sizeof(BITMAPINFOHEADER));
 
-    memcpy((uint8_t*)hDIB + sizeof(BITMAPINFOHEADER), frame.data.data(), imageSize);
+    uint8_t* dst = (uint8_t*)hDIB + sizeof(BITMAPINFOHEADER);
+    const uint8_t* src = frame.data();
+    memcpy(dst, src, imageSize);
 
     pio->dwFlags = 0;
     pio->hdib = hDIB;

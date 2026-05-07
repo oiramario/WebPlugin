@@ -63,17 +63,15 @@ int main(int argc, char* argv[]) {
 
             std::vector<uint8_t> dib(sizeof(BITMAPINFOHEADER) + imageSize);
             memcpy(dib.data(), &bih, sizeof(BITMAPINFOHEADER));
-            memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data.data(), rowBytes * decoder.getHeight());
+            memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data(), rowBytes * decoder.getHeight());
             SaveDIBToBMP(dib, name);
-            std::cout << "  Frame " << i << ": " << frame.delay << "ms" << std::endl;
-            total_duration += frame.delay;
+            std::cout << "  Frame " << i << ": " << decoder.getFrameDelay(i) << "ms" << std::endl;
+            total_duration += decoder.getFrameDelay(i);
         }
         std::cout << "Total animation duration: " << total_duration << "ms" << std::endl;
     } else {
         const auto& frame = decoder.getFrame(0);
-        int bpp = decoder.hasAlpha() ? 32 : 24;
-        int bytesPerPixel = bpp / 8;
-        int rowBytes = decoder.getWidth() * bytesPerPixel;
+        int rowBytes = decoder.getWidth() * 3;
         int stride = ((rowBytes + 3) / 4) * 4;
         int imageSize = stride * decoder.getHeight();
         BITMAPINFOHEADER bih = {};
@@ -81,13 +79,13 @@ int main(int argc, char* argv[]) {
         bih.biWidth       = decoder.getWidth();
         bih.biHeight      = -decoder.getHeight();  // top-down，无需翻转
         bih.biPlanes      = 1;
-        bih.biBitCount    = bpp;
+        bih.biBitCount    = 24;
         bih.biCompression = BI_RGB;
         bih.biSizeImage   = imageSize;
 
         std::vector<uint8_t> dib(sizeof(BITMAPINFOHEADER) + imageSize);
         memcpy(dib.data(), &bih, sizeof(BITMAPINFOHEADER));
-        memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data.data(), rowBytes * decoder.getHeight());
+        memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data(), rowBytes * decoder.getHeight());
         SaveDIBToBMP(dib, "d:\\1.bmp");
     }
 
