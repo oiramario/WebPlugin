@@ -1,7 +1,12 @@
-#include "WebPDecoder.h"
+﻿#include "WebPDecoder.h"
 #include <webp/decode.h>
 #include <webp/demux.h>
 #include <windows.h>
+
+// Checkerboard pattern for transparent background
+static constexpr int kCheckerCell = 8;
+static constexpr uint8_t kCheckerLight = 224;
+static constexpr uint8_t kCheckerDark = 192;
 
 WebPDecoder::~WebPDecoder() {
     if (anim_decoder_) {
@@ -22,12 +27,12 @@ bool WebPDecoder::decode(const uint8_t* data, size_t size) {
     has_alpha_ = (features.has_alpha != 0);
     has_animation_ = features.has_animation;
 
-    // Pre-allocate frame buffer (knowing dimensions and pixel format)
+    // Pre-allocate frame buffer — ACDSee only supports 24-bit BGR DIB, so 3 BPP
     {
         int bpp = 3;
-        int rowBytes = width_ * bpp;
-        stride_ = ((rowBytes + 3) / 4) * 4;
-        current_frame_.resize(stride_ * height_);
+        frame_row_bytes_ = width_ * bpp;
+        frame_stride_ = ((frame_row_bytes_ + 3) / 4) * 4;
+        current_frame_.resize(frame_stride_ * height_);
     }
 
     if (has_animation_) {
@@ -39,33 +44,57 @@ bool WebPDecoder::decode(const uint8_t* data, size_t size) {
 
 bool WebPDecoder::decodeStatic(const uint8_t* data, size_t size) {
     total_frames_ = 1;
+    uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
 
-    uint8_t* pixels = WebPDecodeBGR(data, size, nullptr, nullptr);
-    if (!pixels) {
-        OutputDebugStringA("WebPDecoder: Failed to decode WebP image\n");
-        return false;
+    if (!has_alpha_) {
+        uint8_t* pixels = WebPDecodeBGR(data, size, nullptr, nullptr);
+        if (!pixels) return false;
+        for (int y = 0; y < height_; y++) {
+            memcpy(dst, pixels + y * frame_row_bytes_, frame_row_bytes_);
+            dst -= frame_stride_;
+        }
+        WebPFree(pixels);
+    } else {
+        uint8_t* pixels = WebPDecodeBGRA(data, size, nullptr, nullptr);
+        if (!pixels) return false;
+
+        for (int y = 0; y < height_; y++) {
+            const uint8_t* sp = pixels + y * width_ * 4;
+            uint8_t* dp = dst;
+            int cellY = y / kCheckerCell;
+            for (int x = 0; x < width_; x++) {
+                uint8_t a = sp[3];
+                if (a == 255) {
+                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+                } else {
+                    uint8_t bg = ((x / kCheckerCell + cellY) & 1) ? kCheckerDark : kCheckerLight;
+                    if (a == 0) {
+                        dp[0] = bg; dp[1] = bg; dp[2] = bg;
+                    } else {
+                        uint8_t inv = 255 - a;
+                        dp[0] = (uint8_t)((sp[0] * a + bg * inv) / 255);
+                        dp[1] = (uint8_t)((sp[1] * a + bg * inv) / 255);
+                        dp[2] = (uint8_t)((sp[2] * a + bg * inv) / 255);
+                    }
+                }
+                sp += 4;
+                dp += 3;
+            }
+            dst -= frame_stride_;
+        }
+        WebPFree(pixels);
     }
-
-    // Flip top-down source -> bottom-up
-    int rowBytes = width_ * 3;
-    uint8_t* dst = current_frame_.data() + (height_ - 1) * stride_;
-    const uint8_t* src = pixels;
-    for (int y = 0; y < height_; y++) {
-        memcpy(dst, src, rowBytes);
-        dst -= stride_;
-        src += rowBytes;
-    }
-    WebPFree(pixels);
-
     return true;
 }
 
 bool WebPDecoder::decodeAnimation(const uint8_t* data, size_t size) {
-    has_alpha_ = true;
     raw_data_.assign(data, data + size);
 
     WebPAnimDecoderOptions options;
     WebPAnimDecoderOptionsInit(&options);
+    // WebPAnimDecoder requires an alpha-capable mode (BGRA/RGBA/bgrA/rgbA),
+    // non-alpha modes like MODE_BGR are rejected in ApplyDecoderOptions.
+    // Alpha is also needed for inter-frame blending during compositing.
     options.color_mode = MODE_BGRA;
 
     WebPData webp_data = {raw_data_.data(), raw_data_.size()};
@@ -116,17 +145,46 @@ const Frame& WebPDecoder::getFrame(int index) {
         return current_frame_;
     }
 
-    // Sequential decode forward to target frame
-    while (current_frame_index_ < index) {
-        uint8_t* pixels = nullptr;
-        int timestamp = 0;
-        if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
-            break;
-        }
-        bgraToBGR(pixels);
-        current_frame_index_++;
+    if (current_frame_index_ >= total_frames_) {
+        return current_frame_;
     }
 
+    uint8_t* pixels = nullptr;
+    int timestamp = 0;
+    if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
+        return current_frame_;
+    }
+
+    // BGRA -> BGR with checkerboard blend for transparency, flip bottom-up
+    {
+        uint8_t* out = current_frame_.data() + (height_ - 1) * frame_stride_;
+        for (int y = 0; y < height_; y++) {
+            const uint8_t* sp = pixels + y * width_ * 4;
+            uint8_t* dp = out;
+            int cellY = y / kCheckerCell;
+            for (int x = 0; x < width_; x++) {
+                uint8_t a = sp[3];
+                if (a == 255) {
+                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+                } else {
+                    uint8_t bg = ((x / kCheckerCell + cellY) & 1) ? kCheckerDark : kCheckerLight;
+                    if (a == 0) {
+                        dp[0] = bg; dp[1] = bg; dp[2] = bg;
+                    } else {
+                        uint8_t inv = 255 - a;
+                        dp[0] = (uint8_t)((sp[0] * a + bg * inv) / 255);
+                        dp[1] = (uint8_t)((sp[1] * a + bg * inv) / 255);
+                        dp[2] = (uint8_t)((sp[2] * a + bg * inv) / 255);
+                    }
+                }
+                sp += 4;
+                dp += 3;
+            }
+            out -= frame_stride_;
+        }
+    }
+
+    current_frame_index_++;
     return current_frame_;
 }
 
@@ -135,32 +193,4 @@ int WebPDecoder::getFrameDelay(int index) const {
         return frame_delays_[index];
     }
     return 0;
-}
-
-void WebPDecoder::bgraToBGR(const uint8_t* bgra) {
-    const int rowBytes = width_ * 3;
-    const int stride   = ((rowBytes + 3) / 4) * 4;
-
-    // Vertical flip: top-down BGRA -> bottom-up BGR
-    uint8_t* out = current_frame_.data() + (height_ - 1) * stride;
-    const uint8_t* srcRow = bgra;
-    for (int y = 0; y < height_; y++) {
-        uint8_t*       dp = out;
-        const uint8_t* sp = srcRow;
-        const uint8_t* spEnd = sp + width_ * 4;
-
-        for (; sp + 8 <= spEnd; sp += 8, dp += 6) {
-            uint64_t px;
-            memcpy(&px, sp, 8);
-            *(uint32_t*)(dp)     = (uint32_t)(px & 0xFFFFFF) | ((uint32_t)((px >> 32) & 0xFF) << 24);
-            *(uint16_t*)(dp + 4) = (uint16_t)((px >> 40) & 0xFFFF);
-        }
-
-        for (; sp < spEnd; sp += 4, dp += 3) {
-            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
-        }
-
-        out    -= stride;
-        srcRow += width_ * 4;
-    }
 }

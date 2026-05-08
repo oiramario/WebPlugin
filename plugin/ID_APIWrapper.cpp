@@ -126,7 +126,7 @@ int ID_APIWrapper::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
         pii->si.cx = decoder->getWidth();
         pii->si.cy = decoder->getHeight();
         pii->nBPS = decoder->getBitsPerSample();
-        pii->nSPP = 3;
+        pii->nSPP = decoder->hasAlpha() ? 4 : 3;
         pii->nPages = decoder->getFrameCount();
 
         return IDE_OK;
@@ -147,13 +147,8 @@ int ID_APIWrapper::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
             return IDE_NoPage;
         }
 
-        if (decoder->hasAnimated()) {
-            ppi->dwFlags = PPF_RGB;
-            ppi->nSPP = 3;
-        } else {
-            ppi->dwFlags = PPF_RGB;
-            ppi->nSPP = 3;
-        }
+        ppi->dwFlags = decoder->hasAlpha() ? PPF_RGB | PPF_ALPHA : PPF_RGB;
+        ppi->nSPP = decoder->hasAlpha() ? 4 : 3;
         ppi->si.cx = decoder->getWidth();
         ppi->si.cy = decoder->getHeight();
         ppi->nBPS = decoder->getBitsPerSample();
