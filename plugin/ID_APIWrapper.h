@@ -20,6 +20,7 @@ public:
 
 private:
     static INT_PTR CALLBACK AboutDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+    static void RegisterWebPIcon();
 
 private:
     ID_ClientInfo m_ClientInfo;

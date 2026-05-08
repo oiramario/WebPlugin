@@ -1,10 +1,55 @@
 #include "ID_APIWrapper.h"
 #include <windows.h>
+#include <shlobj.h>
 #include <string.h>
 #include "res/resource.h"
 #include "WebPDecoder.h"
 
 HMODULE ID_APIWrapper::g_hModule = NULL;
+
+void ID_APIWrapper::RegisterWebPIcon()
+{
+    char path[MAX_PATH];
+    if (!GetModuleFileNameA(g_hModule, path, MAX_PATH))
+        return;
+
+    char iconRef[MAX_PATH + 16];
+    sprintf_s(iconRef, "%s,-%d", path, IDI_ICON_WEBP);
+
+    // Read current ProgID for .webp
+    char progID[128] = {0};
+    DWORD size = sizeof(progID);
+    if (RegGetValueA(HKEY_CLASSES_ROOT, ".webp", NULL, RRF_RT_REG_SZ, NULL, progID, &size) == ERROR_SUCCESS) {
+        // Override icon on existing ProgID under HKCU
+        char keyPath[256];
+        sprintf_s(keyPath, "Software\\Classes\\%s\\DefaultIcon", progID);
+        HKEY hKey;
+        if (RegCreateKeyExA(HKEY_CURRENT_USER, keyPath, 0, NULL,
+                REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+            RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE*)iconRef,
+                (DWORD)(strlen(iconRef) + 1));
+            RegCloseKey(hKey);
+        }
+    } else {
+        // No ProgID: create minimal association with icon
+        HKEY hKey;
+        if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\.webp",
+                0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+            RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE*)"WebP.Image",
+                (DWORD)(strlen("WebP.Image") + 1));
+            RegCloseKey(hKey);
+        }
+        if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\WebP.Image\\DefaultIcon",
+                0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+            RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE*)iconRef,
+                (DWORD)(strlen(iconRef) + 1));
+            RegCloseKey(hKey);
+        }
+    }
+
+    // Notify Explorer to refresh icon cache
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+}
 
 ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* pci)
 :   m_WebPFormatInfo {
@@ -43,6 +88,9 @@ ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* pci)
         RegSetValueExA(hKey, "ViewerSharpen", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         RegCloseKey(hKey);
     }
+
+    // Register WebP icon for Windows Explorer
+    RegisterWebPIcon();
 }
 
 ID_APIWrapper::~ID_APIWrapper()
