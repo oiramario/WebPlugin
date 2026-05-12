@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
     file.close();
 
     WebPDecoder decoder;
-    if (!decoder.decode(data.data(), size)) {
+    if (!decoder.decode(data)) {
         std::cerr << "Decoding failed" << std::endl;
         return 1;
     }
@@ -43,49 +43,20 @@ int main(int argc, char* argv[]) {
         int total_duration = 0;
         int nFrames = decoder.getFrameCount();
         for (int i = 0; i < nFrames; ++i) {
-            const auto& frame = decoder.getFrame(i);
             char name[256] = {0};
             sprintf_s(name, 256, "d:\\%d.bmp", i);
 
-            // 构造 DIB（BITMAPINFOHEADER + 像素数据）供保存
-            int bpp = 24;
-            int rowBytes = decoder.getWidth() * 3;
-            int stride = ((rowBytes + 3) / 4) * 4;
-            int imageSize = stride * decoder.getHeight();
-            BITMAPINFOHEADER bih = {};
-            bih.biSize        = sizeof(BITMAPINFOHEADER);
-            bih.biWidth       = decoder.getWidth();
-            bih.biHeight      = decoder.getHeight();  // top-down，无需翻转
-            bih.biPlanes      = 1;
-            bih.biBitCount    = bpp;
-            bih.biCompression = BI_RGB;
-            bih.biSizeImage   = imageSize;
-
-            std::vector<uint8_t> dib(sizeof(BITMAPINFOHEADER) + imageSize);
-            memcpy(dib.data(), &bih, sizeof(BITMAPINFOHEADER));
-            memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data(), rowBytes * decoder.getHeight());
+            std::vector<uint8_t> dib(decoder.getDIBSize());
+            decoder.writeDIB(i, dib.data());
             SaveDIBToBMP(dib, name);
+
             std::cout << "  Frame " << i << ": " << decoder.getFrameDelay(i) << "ms" << std::endl;
             total_duration += decoder.getFrameDelay(i);
         }
         std::cout << "Total animation duration: " << total_duration << "ms" << std::endl;
     } else {
-        const auto& frame = decoder.getFrame(0);
-        int rowBytes = decoder.getWidth() * 3;
-        int stride = ((rowBytes + 3) / 4) * 4;
-        int imageSize = stride * decoder.getHeight();
-        BITMAPINFOHEADER bih = {};
-        bih.biSize        = sizeof(BITMAPINFOHEADER);
-        bih.biWidth       = decoder.getWidth();
-        bih.biHeight      = -decoder.getHeight();  // top-down，无需翻转
-        bih.biPlanes      = 1;
-        bih.biBitCount    = 24;
-        bih.biCompression = BI_RGB;
-        bih.biSizeImage   = imageSize;
-
-        std::vector<uint8_t> dib(sizeof(BITMAPINFOHEADER) + imageSize);
-        memcpy(dib.data(), &bih, sizeof(BITMAPINFOHEADER));
-        memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data(), rowBytes * decoder.getHeight());
+        std::vector<uint8_t> dib(decoder.getDIBSize());
+        decoder.writeDIB(0, dib.data());
         SaveDIBToBMP(dib, "d:\\1.bmp");
     }
 

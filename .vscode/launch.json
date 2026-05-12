@@ -1,12 +1,20 @@
 {
     "version": "0.2.0",
+    "inputs": [
+        {
+            "id": "webpPath",
+            "type": "promptString",
+            "description": "Path to WebP file to decode",
+            "default": "${workspaceFolder}/test/sample.webp"
+        }
+    ],
     "configurations": [
         {
             "name": "CMake: WebPlugin",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${command:cmake.launchTargetPath}",
-            "args": ["D:\\acdsee\\bones-17547.webp"],
+            "args": ["${input:webpPath}"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
@@ -14,4 +22,3 @@
         }
     ]
 }
-    

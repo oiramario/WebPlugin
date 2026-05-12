@@ -1,0 +1,14 @@
+#ifndef _resource_hpp__
+#define _resource_hpp__
+
+#define IDD_ABOUT       101
+#define IDS_VERSION     201
+#define IDC_VERSION     301
+#define IDI_ICON_WEBP   401
+
+#define VER_STR         "@CMAKE_PROJECT_VERSION@"
+#define VER_MAJOR       @CMAKE_PROJECT_VERSION_MAJOR@
+#define VER_MINOR       @CMAKE_PROJECT_VERSION_MINOR@
+#define VER_PATCH       @CMAKE_PROJECT_VERSION_PATCH@
+
+#endif

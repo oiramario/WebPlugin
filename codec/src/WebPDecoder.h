@@ -2,6 +2,7 @@
 #define WEBP_DECODER_H
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 using Frame = std::vector<uint8_t>;
@@ -13,7 +14,11 @@ public:
     WebPDecoder() = default;
     ~WebPDecoder();
 
-    bool decode(const uint8_t* data, size_t size);
+    // Decodes the WebP data at `bytes`.
+    // For animated WebP, the backing memory must remain valid for the lifetime
+    // of this WebPDecoder — libwebp's animation decoder holds pointers into it.
+    // For static WebP, the data is copied internally and `bytes` need not outlive the call.
+    bool decode(std::span<const uint8_t> bytes);
 
     bool hasAnimated() const { return has_animation_; }
     bool hasAlpha() const { return has_alpha_; }
@@ -23,6 +28,13 @@ public:
     int getFrameCount() const { return has_animation_ ? total_frames_ : 1; }
     int getFrameDelay(int index) const;
     const Frame& getFrame(int index);
+
+    // DIB packaging (24-bit BGR bottom-up, 4-byte row stride).
+    // getDIBSize() returns the total byte size for writeDIB()'s output buffer.
+    // writeDIB() fills BITMAPINFOHEADER followed by pixel data; for animation,
+    // it advances the internal iterator (same contract as getFrame).
+    size_t getDIBSize() const;
+    void writeDIB(int page, void* out);
 
 private:
     // Image info
@@ -37,14 +49,18 @@ private:
     int frame_stride_ = 0;
     Frame current_frame_;
 
-    // Animation state
-    std::vector<uint8_t> raw_data_;
+    // Non-owning view of caller's bytes (only populated for animation).
+    std::span<const uint8_t> src_bytes_;
     WebPAnimDecoder* anim_decoder_ = nullptr;
     int current_frame_index_ = -1;
     std::vector<int> frame_delays_;
 
-    bool decodeStatic(const uint8_t* data, size_t size);
-    bool decodeAnimation(const uint8_t* data, size_t size);
+    bool decodeStatic(std::span<const uint8_t> bytes);
+    bool decodeAnimation(std::span<const uint8_t> bytes);
+
+    // BGRA top-down → BGR bottom-up into current_frame_,
+    // translucent pixels composited against a checkerboard background.
+    void compositeBGRAtoBGR(const uint8_t* src_bgra);
 };
 
 #endif // WEBP_DECODER_H

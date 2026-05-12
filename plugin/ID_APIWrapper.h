@@ -23,8 +23,6 @@ private:
     static void RegisterWebPIcon();
 
 private:
-    ID_ClientInfo m_ClientInfo;
-    ID_FormatInfo m_WebPFormatInfo;
     ID_FormatInfo m_szFormatInfo[1];
     ID_PlugInInfo m_PlugInInfo;
 

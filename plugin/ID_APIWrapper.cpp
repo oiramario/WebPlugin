@@ -7,6 +7,27 @@
 
 HMODULE ID_APIWrapper::g_hModule = NULL;
 
+// Write `value` to the default REG_SZ entry of (root, subKey) only if the current
+// value differs (or is absent). Returns true if a write actually happened.
+static bool SetRegStringIfChanged(HKEY root, const char* subKey, const char* value)
+{
+    char existing[MAX_PATH + 16] = {0};
+    DWORD size = sizeof(existing);
+    LSTATUS r = RegGetValueA(root, subKey, NULL, RRF_RT_REG_SZ, NULL, existing, &size);
+    if (r == ERROR_SUCCESS && strcmp(existing, value) == 0) {
+        return false;
+    }
+
+    HKEY hKey;
+    if (RegCreateKeyExA(root, subKey, 0, NULL, REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+        return false;
+    }
+    RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE*)value, (DWORD)(strlen(value) + 1));
+    RegCloseKey(hKey);
+    return true;
+}
+
 void ID_APIWrapper::RegisterWebPIcon()
 {
     char path[MAX_PATH];
@@ -16,6 +37,8 @@ void ID_APIWrapper::RegisterWebPIcon()
     char iconRef[MAX_PATH + 16];
     sprintf_s(iconRef, "%s,-%d", path, IDI_ICON_WEBP);
 
+    bool changed = false;
+
     // Read current ProgID for .webp
     char progID[128] = {0};
     DWORD size = sizeof(progID);
@@ -23,48 +46,32 @@ void ID_APIWrapper::RegisterWebPIcon()
         // Override icon on existing ProgID under HKCU
         char keyPath[256];
         sprintf_s(keyPath, "Software\\Classes\\%s\\DefaultIcon", progID);
-        HKEY hKey;
-        if (RegCreateKeyExA(HKEY_CURRENT_USER, keyPath, 0, NULL,
-                REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE*)iconRef,
-                (DWORD)(strlen(iconRef) + 1));
-            RegCloseKey(hKey);
-        }
+        changed |= SetRegStringIfChanged(HKEY_CURRENT_USER, keyPath, iconRef);
     } else {
         // No ProgID: create minimal association with icon
-        HKEY hKey;
-        if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\.webp",
-                0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE*)"WebP.Image",
-                (DWORD)(strlen("WebP.Image") + 1));
-            RegCloseKey(hKey);
-        }
-        if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Classes\\WebP.Image\\DefaultIcon",
-                0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-            RegSetValueExA(hKey, NULL, 0, REG_SZ, (const BYTE*)iconRef,
-                (DWORD)(strlen(iconRef) + 1));
-            RegCloseKey(hKey);
-        }
+        changed |= SetRegStringIfChanged(HKEY_CURRENT_USER, "Software\\Classes\\.webp", "WebP.Image");
+        changed |= SetRegStringIfChanged(HKEY_CURRENT_USER, "Software\\Classes\\WebP.Image\\DefaultIcon", iconRef);
     }
 
-    // Notify Explorer to refresh icon cache
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+    // Only notify Explorer if we actually touched something
+    if (changed) {
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+    }
 }
 
-ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* pci)
-:   m_WebPFormatInfo {
-        .dwFlags = 0, // CIF_REGISTERED
-        .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
-        .szName = "MasterZ / oiramario",
-        .szNameShort = "WEBP",
-        .pszExtList = (char*)"WEBP\0\0",
-        .szDefExt = "WEBP",
-        .color = 0,
-        .iIcon = 0,
-        .pszMimeType = NULL
-    },
-    m_szFormatInfo {
-        m_WebPFormatInfo
+ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* /*pci*/)
+:   m_szFormatInfo {
+        {
+            .dwFlags = 0, // CIF_REGISTERED
+            .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
+            .szName = "MasterZ / oiramario",
+            .szNameShort = "WEBP",
+            .pszExtList = (char*)"WEBP\0\0",
+            .szDefExt = "WEBP",
+            .color = 0,
+            .iIcon = 0,
+            .pszMimeType = NULL
+        }
     },
     m_PlugInInfo {
         .dwFlags = 0,
@@ -75,18 +82,24 @@ ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* pci)
         .pFormatInfo = m_szFormatInfo
     }
 {
-    m_ClientInfo.dwFlags = pci->dwFlags;
-    strcpy_s(m_ClientInfo.szAppName, pci->szAppName);
-    strcpy_s(m_ClientInfo.szCompany, pci->szCompany);
-
     // Force disable "Sharpen subsampled images" which causes hang
-    // on large animated WebP (takes effect next ACDSee launch)
-    HKEY hKey;
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\ACD Systems\\ACDSee Pro\\50",
-            0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
-        DWORD val = 0;
-        RegSetValueExA(hKey, "ViewerSharpen", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
-        RegCloseKey(hKey);
+    // on large animated WebP (takes effect next ACDSee launch).
+    // Only write if currently non-zero or missing.
+    {
+        HKEY hKey;
+        if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\ACD Systems\\ACDSee Pro\\50",
+                0, KEY_QUERY_VALUE | KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+            DWORD current = 0, type = 0, size = sizeof(current);
+            LSTATUS r = RegQueryValueExA(hKey, "ViewerSharpen", NULL, &type,
+                                         (LPBYTE)&current, &size);
+            bool needsWrite = (r != ERROR_SUCCESS) || (type != REG_DWORD) || (current != 0);
+            if (needsWrite) {
+                DWORD zero = 0;
+                RegSetValueExA(hKey, "ViewerSharpen", 0, REG_DWORD,
+                               (const BYTE*)&zero, sizeof(zero));
+            }
+            RegCloseKey(hKey);
+        }
     }
 
     // Register WebP icon for Windows Explorer
@@ -138,7 +151,7 @@ int ID_APIWrapper::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
         return IDE_Error;
     }
 
-    if (!decoder->decode(psi->pBuf, psi->dwLen))
+    if (!decoder->decode({psi->pBuf, psi->dwLen}))
     {
         delete decoder;
         return IDE_Error;
@@ -221,42 +234,19 @@ int ID_APIWrapper::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* 
         return IDE_NoPage;
     }
 
-    const int width  = decoder->getWidth();
-    const int height = decoder->getHeight();
-    const int bytesPerPixel = 3;
-
-    auto& frame = decoder->getFrame(pdp->nPage);
-
-    int rowBytes = width * bytesPerPixel;
-    int stride   = ((rowBytes + 3) / 4) * 4;
-    int imageSize = stride * height;
-
-    HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, sizeof(BITMAPINFOHEADER) + imageSize);
+    HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, decoder->getDIBSize());
     if (!hDIB) {
         return IDE_Error;
     }
-
-    BITMAPINFOHEADER bih = {0};
-    bih.biSize        = sizeof(BITMAPINFOHEADER);
-    bih.biWidth       = width;
-    bih.biHeight      = height;
-    bih.biPlanes      = 1;
-    bih.biBitCount    = bytesPerPixel * 8;
-    bih.biCompression = BI_RGB;
-    bih.biSizeImage   = imageSize;
-    memcpy(hDIB, &bih, sizeof(BITMAPINFOHEADER));
-
-    uint8_t* dst = (uint8_t*)hDIB + sizeof(BITMAPINFOHEADER);
-    const uint8_t* src = frame.data();
-    memcpy(dst, src, imageSize);
+    decoder->writeDIB(pdp->nPage, hDIB);
 
     pio->dwFlags = 0;
     pio->hdib = hDIB;
     pio->hemf = NULL;
     pio->rc.left = 0;
     pio->rc.top = 0;
-    pio->rc.right = width;
-    pio->rc.bottom = height;
+    pio->rc.right = decoder->getWidth();
+    pio->rc.bottom = decoder->getHeight();
     pio->pParamEx = NULL;
 
     return IDE_OK;

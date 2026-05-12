@@ -15,9 +15,9 @@ WebPDecoder::~WebPDecoder() {
     }
 }
 
-bool WebPDecoder::decode(const uint8_t* data, size_t size) {
+bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     WebPBitstreamFeatures features;
-    if (WebPGetFeatures(data, size, &features) != VP8_STATUS_OK) {
+    if (WebPGetFeatures(bytes.data(), bytes.size(), &features) != VP8_STATUS_OK) {
         OutputDebugStringA("WebPDecoder: Failed to get WebP features\n");
         return false;
     }
@@ -36,18 +36,18 @@ bool WebPDecoder::decode(const uint8_t* data, size_t size) {
     }
 
     if (has_animation_) {
-        return decodeAnimation(data, size);
+        return decodeAnimation(bytes);
     } else {
-        return decodeStatic(data, size);
+        return decodeStatic(bytes);
     }
 }
 
-bool WebPDecoder::decodeStatic(const uint8_t* data, size_t size) {
+bool WebPDecoder::decodeStatic(std::span<const uint8_t> bytes) {
     total_frames_ = 1;
     uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
 
     if (!has_alpha_) {
-        uint8_t* pixels = WebPDecodeBGR(data, size, nullptr, nullptr);
+        uint8_t* pixels = WebPDecodeBGR(bytes.data(), bytes.size(), nullptr, nullptr);
         if (!pixels) return false;
         for (int y = 0; y < height_; y++) {
             memcpy(dst, pixels + y * frame_row_bytes_, frame_row_bytes_);
@@ -55,40 +55,17 @@ bool WebPDecoder::decodeStatic(const uint8_t* data, size_t size) {
         }
         WebPFree(pixels);
     } else {
-        uint8_t* pixels = WebPDecodeBGRA(data, size, nullptr, nullptr);
+        uint8_t* pixels = WebPDecodeBGRA(bytes.data(), bytes.size(), nullptr, nullptr);
         if (!pixels) return false;
-
-        for (int y = 0; y < height_; y++) {
-            const uint8_t* sp = pixels + y * width_ * 4;
-            uint8_t* dp = dst;
-            int cellY = y / kCheckerCell;
-            for (int x = 0; x < width_; x++) {
-                uint8_t a = sp[3];
-                if (a == 255) {
-                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
-                } else {
-                    uint8_t bg = ((x / kCheckerCell + cellY) & 1) ? kCheckerDark : kCheckerLight;
-                    if (a == 0) {
-                        dp[0] = bg; dp[1] = bg; dp[2] = bg;
-                    } else {
-                        uint8_t inv = 255 - a;
-                        dp[0] = (uint8_t)((sp[0] * a + bg * inv) / 255);
-                        dp[1] = (uint8_t)((sp[1] * a + bg * inv) / 255);
-                        dp[2] = (uint8_t)((sp[2] * a + bg * inv) / 255);
-                    }
-                }
-                sp += 4;
-                dp += 3;
-            }
-            dst -= frame_stride_;
-        }
+        compositeBGRAtoBGR(pixels);
         WebPFree(pixels);
     }
     return true;
 }
 
-bool WebPDecoder::decodeAnimation(const uint8_t* data, size_t size) {
-    raw_data_.assign(data, data + size);
+bool WebPDecoder::decodeAnimation(std::span<const uint8_t> bytes) {
+    // Borrow the caller's bytes — lifetime contract documented on decode().
+    src_bytes_ = bytes;
 
     WebPAnimDecoderOptions options;
     WebPAnimDecoderOptionsInit(&options);
@@ -97,7 +74,7 @@ bool WebPDecoder::decodeAnimation(const uint8_t* data, size_t size) {
     // Alpha is also needed for inter-frame blending during compositing.
     options.color_mode = MODE_BGRA;
 
-    WebPData webp_data = {raw_data_.data(), raw_data_.size()};
+    WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
     anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
     if (!anim_decoder_) {
         OutputDebugStringA("WebPDecoder: Failed to create WebP animation decoder\n");
@@ -116,24 +93,26 @@ bool WebPDecoder::decodeAnimation(const uint8_t* data, size_t size) {
         return false;
     }
 
-    // Pre-extract frame delay table (no pixel decoding needed)
+    // Pre-extract frame delay table (no pixel decoding needed).
+    // Fallback to 100ms (libwebp convention) for zero/unknown durations.
+    constexpr int kDefaultFrameDelayMs = 100;
     frame_delays_.reserve(total_frames_);
     {
-        WebPData d = {raw_data_.data(), raw_data_.size()};
+        WebPData d = {src_bytes_.data(), src_bytes_.size()};
         WebPDemuxer* demux = WebPDemux(&d);
         if (demux) {
             for (int i = 1; i <= total_frames_; i++) {
                 WebPIterator iter;
                 if (WebPDemuxGetFrame(demux, i, &iter)) {
-                    frame_delays_.push_back(iter.duration);
+                    frame_delays_.push_back(iter.duration > 0 ? iter.duration : kDefaultFrameDelayMs);
                     WebPDemuxReleaseIterator(&iter);
                 } else {
-                    frame_delays_.push_back(0);
+                    frame_delays_.push_back(kDefaultFrameDelayMs);
                 }
             }
             WebPDemuxDelete(demux);
         } else {
-            frame_delays_.assign(total_frames_, 0);
+            frame_delays_.assign(total_frames_, kDefaultFrameDelayMs);
         }
     }
 
@@ -142,6 +121,14 @@ bool WebPDecoder::decodeAnimation(const uint8_t* data, size_t size) {
 
 const Frame& WebPDecoder::getFrame(int index) {
     if (!has_animation_) {
+        return current_frame_;
+    }
+
+    // Rewind on loop replay (e.g., PageDecode(0) after the last frame).
+    if (index < current_frame_index_) {
+        WebPAnimDecoderReset(anim_decoder_);
+        current_frame_index_ = -1;
+    } else if (index == current_frame_index_) {
         return current_frame_;
     }
 
@@ -155,42 +142,69 @@ const Frame& WebPDecoder::getFrame(int index) {
         return current_frame_;
     }
 
-    // BGRA -> BGR with checkerboard blend for transparency, flip bottom-up
-    {
-        uint8_t* out = current_frame_.data() + (height_ - 1) * frame_stride_;
-        for (int y = 0; y < height_; y++) {
-            const uint8_t* sp = pixels + y * width_ * 4;
-            uint8_t* dp = out;
-            int cellY = y / kCheckerCell;
-            for (int x = 0; x < width_; x++) {
-                uint8_t a = sp[3];
-                if (a == 255) {
-                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
-                } else {
-                    uint8_t bg = ((x / kCheckerCell + cellY) & 1) ? kCheckerDark : kCheckerLight;
-                    if (a == 0) {
-                        dp[0] = bg; dp[1] = bg; dp[2] = bg;
-                    } else {
-                        uint8_t inv = 255 - a;
-                        dp[0] = (uint8_t)((sp[0] * a + bg * inv) / 255);
-                        dp[1] = (uint8_t)((sp[1] * a + bg * inv) / 255);
-                        dp[2] = (uint8_t)((sp[2] * a + bg * inv) / 255);
-                    }
-                }
-                sp += 4;
-                dp += 3;
-            }
-            out -= frame_stride_;
-        }
-    }
+    compositeBGRAtoBGR(pixels);
 
     current_frame_index_++;
     return current_frame_;
 }
 
 int WebPDecoder::getFrameDelay(int index) const {
-    if (has_animation_ && total_frames_ > 0) {
+    if (has_animation_ && index >= 0 && index < total_frames_) {
         return frame_delays_[index];
     }
     return 0;
+}
+
+void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra) {
+    uint8_t* out = current_frame_.data() + (height_ - 1) * frame_stride_;
+    for (int y = 0; y < height_; y++) {
+        const uint8_t* sp = src_bgra + y * width_ * 4;
+        uint8_t* dp = out;
+        int cellY = y / kCheckerCell;
+        for (int x = 0; x < width_; x++) {
+            uint8_t a = sp[3];
+            if (a == 255) {
+                dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+            } else {
+                uint8_t bg = ((x / kCheckerCell + cellY) & 1) ? kCheckerDark : kCheckerLight;
+                if (a == 0) {
+                    dp[0] = bg; dp[1] = bg; dp[2] = bg;
+                } else {
+                    uint32_t inv = 255u - a;
+                    // (n + 1 + (n >> 8)) >> 8  ==  n / 255  for n in [0, 65280]; max here is 255*255.
+                    uint32_t b0 = sp[0] * a + bg * inv;
+                    uint32_t b1 = sp[1] * a + bg * inv;
+                    uint32_t b2 = sp[2] * a + bg * inv;
+                    dp[0] = (uint8_t)((b0 + 1 + (b0 >> 8)) >> 8);
+                    dp[1] = (uint8_t)((b1 + 1 + (b1 >> 8)) >> 8);
+                    dp[2] = (uint8_t)((b2 + 1 + (b2 >> 8)) >> 8);
+                }
+            }
+            sp += 4;
+            dp += 3;
+        }
+        out -= frame_stride_;
+    }
+}
+
+size_t WebPDecoder::getDIBSize() const {
+    return sizeof(BITMAPINFOHEADER) + static_cast<size_t>(frame_stride_) * height_;
+}
+
+void WebPDecoder::writeDIB(int page, void* out) {
+    const Frame& frame = getFrame(page);
+    const int imageSize = frame_stride_ * height_;
+
+    BITMAPINFOHEADER bih = {};
+    bih.biSize        = sizeof(BITMAPINFOHEADER);
+    bih.biWidth       = width_;
+    bih.biHeight      = height_;
+    bih.biPlanes      = 1;
+    bih.biBitCount    = 24;
+    bih.biCompression = BI_RGB;
+    bih.biSizeImage   = imageSize;
+
+    uint8_t* dst = static_cast<uint8_t*>(out);
+    memcpy(dst, &bih, sizeof(BITMAPINFOHEADER));
+    memcpy(dst + sizeof(BITMAPINFOHEADER), frame.data(), imageSize);
 }
