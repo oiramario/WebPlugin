@@ -44,22 +44,11 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
 
 bool WebPDecoder::decodeStatic(std::span<const uint8_t> bytes) {
     total_frames_ = 1;
-    uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
-
-    if (!has_alpha_) {
-        uint8_t* pixels = WebPDecodeBGR(bytes.data(), bytes.size(), nullptr, nullptr);
-        if (!pixels) return false;
-        for (int y = 0; y < height_; y++) {
-            memcpy(dst, pixels + y * frame_row_bytes_, frame_row_bytes_);
-            dst -= frame_stride_;
-        }
-        WebPFree(pixels);
-    } else {
-        uint8_t* pixels = WebPDecodeBGRA(bytes.data(), bytes.size(), nullptr, nullptr);
-        if (!pixels) return false;
-        compositeBGRAtoBGR(pixels);
-        WebPFree(pixels);
-    }
+    // Defer pixel decode to first getFrame() call.
+    // The caller (ACDSee) guarantees psi->pBuf remains valid until CloseImage,
+    // so storing a non-owning reference is safe.
+    src_bytes_ = bytes;
+    static_decoded_ = false;
     return true;
 }
 
@@ -93,34 +82,32 @@ bool WebPDecoder::decodeAnimation(std::span<const uint8_t> bytes) {
         return false;
     }
 
-    // Pre-extract frame delay table (no pixel decoding needed).
-    // Fallback to 100ms (libwebp convention) for zero/unknown durations.
-    constexpr int kDefaultFrameDelayMs = 100;
-    frame_delays_.reserve(total_frames_);
-    {
-        WebPData d = {src_bytes_.data(), src_bytes_.size()};
-        WebPDemuxer* demux = WebPDemux(&d);
-        if (demux) {
-            for (int i = 1; i <= total_frames_; i++) {
-                WebPIterator iter;
-                if (WebPDemuxGetFrame(demux, i, &iter)) {
-                    frame_delays_.push_back(iter.duration > 0 ? iter.duration : kDefaultFrameDelayMs);
-                    WebPDemuxReleaseIterator(&iter);
-                } else {
-                    frame_delays_.push_back(kDefaultFrameDelayMs);
-                }
-            }
-            WebPDemuxDelete(demux);
-        } else {
-            frame_delays_.assign(total_frames_, kDefaultFrameDelayMs);
-        }
-    }
-
     return true;
 }
 
 const Frame& WebPDecoder::getFrame(int index) {
     if (!has_animation_) {
+        // Lazy decode on first access.
+        if (!static_decoded_) {
+            uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
+            if (!has_alpha_) {
+                uint8_t* pixels = WebPDecodeBGR(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
+                if (pixels) {
+                    for (int y = 0; y < height_; y++) {
+                        memcpy(dst, pixels + y * frame_row_bytes_, frame_row_bytes_);
+                        dst -= frame_stride_;
+                    }
+                    WebPFree(pixels);
+                }
+            } else {
+                uint8_t* pixels = WebPDecodeBGRA(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
+                if (pixels) {
+                    compositeBGRAtoBGR(pixels);
+                    WebPFree(pixels);
+                }
+            }
+            static_decoded_ = true;
+        }
         return current_frame_;
     }
 
@@ -148,11 +135,35 @@ const Frame& WebPDecoder::getFrame(int index) {
     return current_frame_;
 }
 
-int WebPDecoder::getFrameDelay(int index) const {
-    if (has_animation_ && index >= 0 && index < total_frames_) {
-        return frame_delays_[index];
+int WebPDecoder::getFrameDelay(int index) {
+    if (!has_animation_ || index < 0 || index >= total_frames_) {
+        return 0;
     }
-    return 0;
+
+    // Lazily extract frame delay table on first access.
+    if (!delays_loaded_) {
+        constexpr int kDefaultFrameDelayMs = 100;
+        frame_delays_.reserve(total_frames_);
+        WebPData d = {src_bytes_.data(), src_bytes_.size()};
+        WebPDemuxer* demux = WebPDemux(&d);
+        if (demux) {
+            for (int i = 1; i <= total_frames_; i++) {
+                WebPIterator iter;
+                if (WebPDemuxGetFrame(demux, i, &iter)) {
+                    frame_delays_.push_back(iter.duration > 0 ? iter.duration : kDefaultFrameDelayMs);
+                    WebPDemuxReleaseIterator(&iter);
+                } else {
+                    frame_delays_.push_back(kDefaultFrameDelayMs);
+                }
+            }
+            WebPDemuxDelete(demux);
+        } else {
+            frame_delays_.assign(total_frames_, kDefaultFrameDelayMs);
+        }
+        delays_loaded_ = true;
+    }
+
+    return frame_delays_[index];
 }
 
 void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra) {

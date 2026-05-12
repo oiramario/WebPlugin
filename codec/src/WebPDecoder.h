@@ -26,7 +26,7 @@ public:
     int getHeight() const { return height_; }
     int getBitsPerSample() const { return 8; }
     int getFrameCount() const { return has_animation_ ? total_frames_ : 1; }
-    int getFrameDelay(int index) const;
+    int getFrameDelay(int index);
     const Frame& getFrame(int index);
 
     // DIB packaging (24-bit BGR bottom-up, 4-byte row stride).
@@ -49,11 +49,13 @@ private:
     int frame_stride_ = 0;
     Frame current_frame_;
 
-    // Non-owning view of caller's bytes (only populated for animation).
+    // Non-owning view of caller's bytes (for static lazy decode and animation).
     std::span<const uint8_t> src_bytes_;
+    bool static_decoded_ = false;
     WebPAnimDecoder* anim_decoder_ = nullptr;
     int current_frame_index_ = -1;
     std::vector<int> frame_delays_;
+    bool delays_loaded_ = false;
 
     bool decodeStatic(std::span<const uint8_t> bytes);
     bool decodeAnimation(std::span<const uint8_t> bytes);
