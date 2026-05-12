@@ -140,8 +140,10 @@ void ID_APIWrapper::ShowPlugInDialog(HWND hWndParent)
 
 int ID_APIWrapper::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
 {
-    // Ensure full file buffer is loaded (required for content inside archives like ZIP)
-    if (psi->pfFillBuffer && psi->dwLen > 0) {
+    // Ensure full file buffer is loaded (required for content inside archives like ZIP).
+    // Only needed when the filename is virtual (e.g. file inside a ZIP archive);
+    // standalone files already have the full buffer.
+    if ((psi->dwFlags & SIF_VIRTUALFILENAME) && psi->pfFillBuffer && psi->dwLen > 0) {
         DWORD dwNewPos = 0;
         psi->pfFillBuffer(psi->pParam, psi->dwLen, &dwNewPos);
     }

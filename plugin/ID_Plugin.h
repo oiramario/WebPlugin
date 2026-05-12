@@ -161,6 +161,8 @@ enum
 ///////////////////
 struct ID_ClientInfo
 {
+    ID_ClientInfo() { ZeroMemory(this, sizeof(*this)); };
+
     DWORD   dwFlags;       // CIF_* flags
     char    szCompany[40]; // Name of company of calling application
     char    szAppName[40]; // Name of calling application.
@@ -207,6 +209,8 @@ struct ID_PlugInInfo
 // Information about an image.
 struct ID_ImageInfo
 {
+    ID_ImageInfo() { ZeroMemory(this, sizeof(*this)); };
+
     DWORD       dwFlags;          // IIF_* flags
     DWORD       dwFormatID;       // format identifier
     SIZE        si;               // image dimensions
@@ -220,8 +224,7 @@ struct ID_ImageInfo
 /////////////////
 enum
 {
-    SIF_FILENAME = 1,  // pszFN is valid and contains the image file path
-    SIF_BUFFER   = 2,  // pBuf / dwLen contain the full image data in memory
+    SIF_VIRTUALFILENAME = 1, // The filename does not refer to an actual file
 };
 
 ///////////////////
@@ -253,6 +256,8 @@ struct ID_SourceInfo
 // Information about a page of an image.
 struct ID_PageInfo
 {
+    ID_PageInfo() { ZeroMemory(this, sizeof(*this)); };
+
     DWORD       dwFlags;          // PPF_* flags
     SIZE        si;               // Page dimensions
     int         nBPS;             // Bits per sample
@@ -269,6 +274,8 @@ struct ID_PageInfo
 // using GlobalFree() and DeleteEnhMetaFile(), resp.
 struct ID_ImageOut
 {
+   ID_ImageOut() { ZeroMemory(this, sizeof(*this)); };
+
    DWORD            dwFlags;    // IOF_* flags
    HGLOBAL          hdib;       // handle to DIB
    HENHMETAFILE     hemf;       // handle to an enhanced metafile
@@ -298,6 +305,8 @@ typedef int(__stdcall *ID_ProgressFunc)(void* pParam, int nProgressNum, int nPro
 ////////////////////
 struct ID_DecodeParam
 {
+    ID_DecodeParam() { ZeroMemory(this, sizeof(*this)); quality = PIQ_SPEED; };
+
     DWORD               dwFlags;    // PID_* flags
     int                 nPage;      // Page to decode
     RECT                rc;         // Region of page to decode, in source pixels (if PID_RECT specified)
@@ -320,7 +329,7 @@ struct ID_OutputParam
    RECT				rc;             // Region of source page to be decoded, in source pixels (if POF_RECT specified)
    int				nWidth;         // Output width
    int				nHeight;        // Output height
-   int				bpp;            // Output bits per pixel (1, 4, 8, 16, 24 or 32)
+   int				bpp;            // Output bits per pixel (1, 4, 8, 16 or 24)
    int				nColorMapLen;   // #Entries in output colormap
    RGBQUAD			colormap[256];  // Output colormap   
 };
