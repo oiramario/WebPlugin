@@ -16,7 +16,7 @@ public:
 
     // Decodes the WebP data at `bytes`.
     // For animated WebP, the backing memory must remain valid for the lifetime
-    // of this WebPDecoder — libwebp's animation decoder holds pointers into it.
+    // of this WebPDecoder - libwebp's animation decoder holds pointers into it.
     // For static WebP, the data is copied internally and `bytes` need not outlive the call.
     bool decode(std::span<const uint8_t> bytes);
 
@@ -45,20 +45,14 @@ private:
     int total_frames_ = 0;
 
     // Frame buffer (ACDSee only supports 24-bit BGR DIB)
-    int frame_row_bytes_ = 0;
     int frame_stride_ = 0;
     Frame current_frame_;
 
     // Non-owning view of caller's bytes (for static lazy decode and animation).
     std::span<const uint8_t> src_bytes_;
-    bool static_decoded_ = false;
     WebPAnimDecoder* anim_decoder_ = nullptr;
-    int current_frame_index_ = -1;
     std::vector<int> frame_delays_;
     bool delays_loaded_ = false;
-
-    bool decodeStatic(std::span<const uint8_t> bytes);
-    bool decodeAnimation(std::span<const uint8_t> bytes);
 
     // BGRA top-down → BGR bottom-up into current_frame_,
     // translucent pixels composited against a checkerboard background.

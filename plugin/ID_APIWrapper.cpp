@@ -28,10 +28,10 @@ static bool SetRegStringIfChanged(HKEY root, const char* subKey, const char* val
     return true;
 }
 
-void ID_APIWrapper::RegisterWebPIcon()
+static void RegisterWebPIcon()
 {
     char path[MAX_PATH];
-    if (!GetModuleFileNameA(g_hModule, path, MAX_PATH))
+    if (!GetModuleFileNameA(ID_APIWrapper::g_hModule, path, MAX_PATH))
         return;
 
     char iconRef[MAX_PATH + 16];
@@ -59,27 +59,25 @@ void ID_APIWrapper::RegisterWebPIcon()
     }
 }
 
-ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* /*pci*/)
+ID_APIWrapper::ID_APIWrapper()
 :   m_szFormatInfo {
-        {
-            .dwFlags = 0, // CIF_REGISTERED
-            .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
-            .szName = "MasterZ / oiramario",
-            .szNameShort = "WEBP",
-            .pszExtList = (char*)"WEBP\0\0",
-            .szDefExt = "WEBP",
-            .color = 0,
-            .iIcon = 0,
-            .pszMimeType = NULL
-        }
+        .dwFlags = 0, // CIF_REGISTERED
+        .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
+        .szName = "MasterZ / oiramario",
+        .szNameShort = "WEBP",
+        .pszExtList = (char*)"WEBP\0\0",
+        .szDefExt = "WEBP",
+        .color = 0,
+        .iIcon = 0,
+        .pszMimeType = NULL
     },
     m_PlugInInfo {
         .dwFlags = 0,
         .nVersion = ID_VERSION,
         .szTitle = "WebP Image Codec",
         .iIcon = 0,
-        .nFormats = sizeof(m_szFormatInfo) / sizeof(m_szFormatInfo[0]),
-        .pFormatInfo = m_szFormatInfo
+        .nFormats = 1,
+        .pFormatInfo = &m_szFormatInfo
     }
 {
     // Force disable "Sharpen subsampled images" which causes hang
@@ -104,10 +102,6 @@ ID_APIWrapper::ID_APIWrapper(ID_ClientInfo* /*pci*/)
 
     // Register WebP icon for Windows Explorer
     RegisterWebPIcon();
-}
-
-ID_APIWrapper::~ID_APIWrapper()
-{
 }
 
 INT_PTR CALLBACK ID_APIWrapper::AboutDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)

@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include "ID_APIWrapper.h"
 
 extern ID_APIWrapper* g_pAPIWrapper;
@@ -16,10 +16,6 @@ BOOL APIENTRY DllMain(HMODULE hModule,
     case DLL_PROCESS_DETACH:
         delete g_pAPIWrapper;
         g_pAPIWrapper = nullptr;
-        break;
-
-    case DLL_THREAD_ATTACH:
-    case DLL_THREAD_DETACH:
         break;
     }
 

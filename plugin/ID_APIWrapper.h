@@ -6,8 +6,8 @@
 class ID_APIWrapper
 {
 public:
-    ID_APIWrapper(ID_ClientInfo* pci);
-    ~ID_APIWrapper();
+    ID_APIWrapper();
+    ~ID_APIWrapper() = default;
 
     void ShowPlugInDialog(HWND hWndParent);
     int OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs);
@@ -16,14 +16,12 @@ public:
     int GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi);
     int PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio);
 
-    const ID_PlugInInfo* GetPlugInInfo() const { return &m_PlugInInfo; }
+    ID_PlugInInfo* GetPlugInInfo() { return &m_PlugInInfo; }
 
 private:
     static INT_PTR CALLBACK AboutDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
-    static void RegisterWebPIcon();
 
-private:
-    ID_FormatInfo m_szFormatInfo[1];
+    ID_FormatInfo m_szFormatInfo;
     ID_PlugInInfo m_PlugInInfo;
 
 public:

@@ -1,4 +1,4 @@
-﻿#include "WebPDecoder.h"
+#include "WebPDecoder.h"
 #include <webp/decode.h>
 #include <webp/demux.h>
 #include <windows.h>
@@ -27,59 +27,39 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     has_alpha_ = (features.has_alpha != 0);
     has_animation_ = features.has_animation;
 
-    // Pre-allocate frame buffer — ACDSee only supports 24-bit BGR DIB, so 3 BPP
-    {
-        int bpp = 3;
-        frame_row_bytes_ = width_ * bpp;
-        frame_stride_ = ((frame_row_bytes_ + 3) / 4) * 4;
-        current_frame_.resize(frame_stride_ * height_);
-    }
+    // Pre-allocate frame buffer - ACDSee only supports 24-bit BGR DIB, so 3 BPP
+    frame_stride_ = ((width_ * 3 + 3) / 4) * 4;
+    current_frame_.resize(frame_stride_ * height_);
+
+    src_bytes_ = bytes;
 
     if (has_animation_) {
-        return decodeAnimation(bytes);
+        WebPAnimDecoderOptions options;
+        WebPAnimDecoderOptionsInit(&options);
+        // WebPAnimDecoder rejects non-alpha modes (like MODE_BGR) in ApplyDecoderOptions.
+        // Alpha is also needed for inter-frame blending during compositing.
+        options.color_mode = MODE_BGRA;
+
+        WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
+        anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
+        if (!anim_decoder_) {
+            OutputDebugStringA("WebPDecoder: Failed to create WebP animation decoder\n");
+            return false;
+        }
+
+        WebPAnimInfo anim_info;
+        if (!WebPAnimDecoderGetInfo(anim_decoder_, &anim_info)) {
+            OutputDebugStringA("WebPDecoder: Failed to get WebP animation info\n");
+            return false;
+        }
+
+        total_frames_ = anim_info.frame_count;
+        if (total_frames_ == 0) {
+            OutputDebugStringA("WebPDecoder: No frames in animation\n");
+            return false;
+        }
     } else {
-        return decodeStatic(bytes);
-    }
-}
-
-bool WebPDecoder::decodeStatic(std::span<const uint8_t> bytes) {
-    total_frames_ = 1;
-    // Defer pixel decode to first getFrame() call.
-    // The caller (ACDSee) guarantees psi->pBuf remains valid until CloseImage,
-    // so storing a non-owning reference is safe.
-    src_bytes_ = bytes;
-    static_decoded_ = false;
-    return true;
-}
-
-bool WebPDecoder::decodeAnimation(std::span<const uint8_t> bytes) {
-    // Borrow the caller's bytes — lifetime contract documented on decode().
-    src_bytes_ = bytes;
-
-    WebPAnimDecoderOptions options;
-    WebPAnimDecoderOptionsInit(&options);
-    // WebPAnimDecoder requires an alpha-capable mode (BGRA/RGBA/bgrA/rgbA),
-    // non-alpha modes like MODE_BGR are rejected in ApplyDecoderOptions.
-    // Alpha is also needed for inter-frame blending during compositing.
-    options.color_mode = MODE_BGRA;
-
-    WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
-    anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
-    if (!anim_decoder_) {
-        OutputDebugStringA("WebPDecoder: Failed to create WebP animation decoder\n");
-        return false;
-    }
-
-    WebPAnimInfo anim_info;
-    if (!WebPAnimDecoderGetInfo(anim_decoder_, &anim_info)) {
-        OutputDebugStringA("WebPDecoder: Failed to get WebP animation info\n");
-        return false;
-    }
-
-    total_frames_ = anim_info.frame_count;
-    if (total_frames_ == 0) {
-        OutputDebugStringA("WebPDecoder: No frames in animation\n");
-        return false;
+        total_frames_ = 1;
     }
 
     return true;
@@ -87,51 +67,30 @@ bool WebPDecoder::decodeAnimation(std::span<const uint8_t> bytes) {
 
 const Frame& WebPDecoder::getFrame(int index) {
     if (!has_animation_) {
-        // Lazy decode on first access.
-        if (!static_decoded_) {
-            uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
-            if (!has_alpha_) {
-                uint8_t* pixels = WebPDecodeBGR(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
-                if (pixels) {
-                    for (int y = 0; y < height_; y++) {
-                        memcpy(dst, pixels + y * frame_row_bytes_, frame_row_bytes_);
-                        dst -= frame_stride_;
-                    }
-                    WebPFree(pixels);
+        uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
+        if (!has_alpha_) {
+            uint8_t* pixels = WebPDecodeBGR(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
+            if (pixels) {
+                for (int y = 0; y < height_; y++) {
+                    memcpy(dst, pixels + y * width_ * 3, width_ * 3);
+                    dst -= frame_stride_;
                 }
-            } else {
-                uint8_t* pixels = WebPDecodeBGRA(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
-                if (pixels) {
-                    compositeBGRAtoBGR(pixels);
-                    WebPFree(pixels);
-                }
+                WebPFree(pixels);
             }
-            static_decoded_ = true;
+        } else {
+            uint8_t* pixels = WebPDecodeBGRA(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
+            if (pixels) {
+                compositeBGRAtoBGR(pixels);
+                WebPFree(pixels);
+            }
         }
-        return current_frame_;
+    } else {
+        // ACDSee guarantees 0..n-1 sequential access.
+        uint8_t* pixels = nullptr;
+        int timestamp = 0;
+        if (WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp))
+            compositeBGRAtoBGR(pixels);
     }
-
-    // Rewind on loop replay (e.g., PageDecode(0) after the last frame).
-    if (index < current_frame_index_) {
-        WebPAnimDecoderReset(anim_decoder_);
-        current_frame_index_ = -1;
-    } else if (index == current_frame_index_) {
-        return current_frame_;
-    }
-
-    if (current_frame_index_ >= total_frames_) {
-        return current_frame_;
-    }
-
-    uint8_t* pixels = nullptr;
-    int timestamp = 0;
-    if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
-        return current_frame_;
-    }
-
-    compositeBGRAtoBGR(pixels);
-
-    current_frame_index_++;
     return current_frame_;
 }
 
