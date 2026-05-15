@@ -9,7 +9,7 @@ configure_file(
 add_library(${PROJECT_NAME} SHARED
     dllmain.cpp
     ID_WebP.cpp
-    ID_APIWrapper.cpp
+    WebPlugin.cpp
     res/resources.rc
     ID_WebP.def
 )

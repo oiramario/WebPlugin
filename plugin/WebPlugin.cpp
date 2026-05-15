@@ -1,11 +1,11 @@
-#include "ID_APIWrapper.h"
+#include "WebPlugin.h"
 #include <windows.h>
 #include <shlobj.h>
 #include <string.h>
 #include "res/resource.h"
 #include "WebPDecoder.h"
 
-HMODULE ID_APIWrapper::g_hModule = NULL;
+HMODULE WebPlugin::g_hModule = NULL;
 
 // Write `value` to the default REG_SZ entry of (root, subKey) only if the current
 // value differs (or is absent). Returns true if a write actually happened.
@@ -31,7 +31,7 @@ static bool SetRegStringIfChanged(HKEY root, const char* subKey, const char* val
 static void RegisterWebPIcon()
 {
     char path[MAX_PATH];
-    if (!GetModuleFileNameA(ID_APIWrapper::g_hModule, path, MAX_PATH))
+    if (!GetModuleFileNameA(WebPlugin::g_hModule, path, MAX_PATH))
         return;
 
     char iconRef[MAX_PATH + 16];
@@ -59,8 +59,8 @@ static void RegisterWebPIcon()
     }
 }
 
-ID_APIWrapper::ID_APIWrapper()
-:   m_szFormatInfo {
+WebPlugin::WebPlugin()
+:   m_FormatInfo {
         .dwFlags = 0, // CIF_REGISTERED
         .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
         .szName = "MasterZ / oiramario",
@@ -77,7 +77,7 @@ ID_APIWrapper::ID_APIWrapper()
         .szTitle = "WebP Image Codec",
         .iIcon = 0,
         .nFormats = 1,
-        .pFormatInfo = &m_szFormatInfo
+        .pFormatInfo = &m_FormatInfo
     }
 {
     // Force disable "Sharpen subsampled images" which causes hang
@@ -104,14 +104,14 @@ ID_APIWrapper::ID_APIWrapper()
     RegisterWebPIcon();
 }
 
-INT_PTR CALLBACK ID_APIWrapper::AboutDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+INT_PTR CALLBACK WebPlugin::AboutDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
     {
     case WM_INITDIALOG:
         {
             char version[64] = {0};
-            LoadString(ID_APIWrapper::g_hModule, IDS_VERSION, version, sizeof(version));
+            LoadString(WebPlugin::g_hModule, IDS_VERSION, version, sizeof(version));
             SetDlgItemText(hDlg, IDC_VERSION, version);
         }
         return (INT_PTR)TRUE;
@@ -127,12 +127,12 @@ INT_PTR CALLBACK ID_APIWrapper::AboutDlgProc(HWND hDlg, UINT message, WPARAM wPa
     return (INT_PTR)FALSE;
 }
 
-void ID_APIWrapper::ShowPlugInDialog(HWND hWndParent)
+void WebPlugin::ShowPlugInDialog(HWND hWndParent)
 {
-    DialogBox(ID_APIWrapper::g_hModule, MAKEINTRESOURCE(IDD_ABOUT), hWndParent, AboutDlgProc);
+    DialogBox(WebPlugin::g_hModule, MAKEINTRESOURCE(IDD_ABOUT), hWndParent, AboutDlgProc);
 }
 
-int ID_APIWrapper::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
+int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
 {
     // Ensure full file buffer is loaded (required for content inside archives like ZIP).
     // Only needed when the filename is virtual (e.g. file inside a ZIP archive);
@@ -157,7 +157,7 @@ int ID_APIWrapper::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
     return IDE_OK;
 }
 
-int ID_APIWrapper::CloseImage(ID_StateHdl hs)
+int WebPlugin::CloseImage(ID_StateHdl hs)
 {
     if (hs)
     {
@@ -168,7 +168,7 @@ int ID_APIWrapper::CloseImage(ID_StateHdl hs)
     return IDE_OK;
 }
 
-int ID_APIWrapper::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
+int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
 {
     if (hs)
     {
@@ -194,7 +194,7 @@ int ID_APIWrapper::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
     }
 }
 
-int ID_APIWrapper::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
+int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
 {
     if (hs)
     {
@@ -220,7 +220,7 @@ int ID_APIWrapper::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
     }
 }
 
-int ID_APIWrapper::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
+int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 {
     if (!hs) return IDE_InvalidParam;
 

@@ -1,7 +1,7 @@
 #include <windows.h>
-#include "ID_APIWrapper.h"
+#include "WebPlugin.h"
 
-extern ID_APIWrapper* g_pAPIWrapper;
+extern WebPlugin* g_pWebPlugin;
 
 BOOL APIENTRY DllMain(HMODULE hModule,
                       DWORD   ul_reason_for_call,
@@ -10,12 +10,12 @@ BOOL APIENTRY DllMain(HMODULE hModule,
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:
-        ID_APIWrapper::g_hModule = hModule;
+        WebPlugin::g_hModule = hModule;
         break;
 
     case DLL_PROCESS_DETACH:
-        delete g_pAPIWrapper;
-        g_pAPIWrapper = nullptr;
+        delete g_pWebPlugin;
+        g_pWebPlugin = nullptr;
         break;
     }
 

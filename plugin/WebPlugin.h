@@ -1,13 +1,13 @@
-#ifndef ID_APIWrapper_h
-#define ID_APIWrapper_h
+#ifndef WebPlugin_h
+#define WebPlugin_h
 
 #include "ID_PlugIn.h"
 
-class ID_APIWrapper
+class WebPlugin
 {
 public:
-    ID_APIWrapper();
-    ~ID_APIWrapper() = default;
+    WebPlugin();
+    ~WebPlugin() = default;
 
     void ShowPlugInDialog(HWND hWndParent);
     int OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs);
@@ -21,7 +21,7 @@ public:
 private:
     static INT_PTR CALLBACK AboutDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 
-    ID_FormatInfo m_szFormatInfo;
+    ID_FormatInfo m_FormatInfo;
     ID_PlugInInfo m_PlugInInfo;
 
 public:
