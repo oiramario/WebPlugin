@@ -56,6 +56,11 @@
     (defined(_M_X64) || defined(_M_IX86))
 #define WEBP_MSC_SSE41  // Visual C++ SSE4.1 targets
 #endif
+
+#if defined(_MSC_VER) && _MSC_VER >= 1700 && \
+    (defined(_M_X64) || defined(_M_IX86))
+#define WEBP_MSC_AVX2  // Visual C++ AVX2 targets
+#endif
 #endif
 
 // WEBP_HAVE_* are used to indicate the presence of the instruction set in dsp
@@ -80,6 +85,16 @@
 #define WEBP_HAVE_SSE41
 #endif
 
+#if (defined(__AVX2__) || defined(WEBP_MSC_AVX2)) && \
+    (!defined(HAVE_CONFIG_H) || defined(WEBP_HAVE_AVX2))
+#define WEBP_USE_AVX2
+#endif
+
+#if defined(WEBP_USE_AVX2) && !defined(WEBP_HAVE_AVX2)
+#define WEBP_HAVE_AVX2
+#endif
+
+#undef WEBP_MSC_AVX2
 #undef WEBP_MSC_SSE41
 #undef WEBP_MSC_SSE2
 
@@ -174,29 +189,64 @@
 #endif
 #endif
 
-#if defined(WEBP_USE_THREAD) && !defined(_WIN32)
-#include <pthread.h>  // NOLINT
+#if defined(WEBP_USE_THREAD)
+#if defined(_WIN32)
+#include <windows.h>
 
-#define WEBP_DSP_INIT(func)                                         \
-  do {                                                              \
-    static volatile VP8CPUInfo func##_last_cpuinfo_used =           \
-        (VP8CPUInfo)&func##_last_cpuinfo_used;                      \
-    static pthread_mutex_t func##_lock = PTHREAD_MUTEX_INITIALIZER; \
-    if (pthread_mutex_lock(&func##_lock)) break;                    \
-    if (func##_last_cpuinfo_used != VP8GetCPUInfo) func();          \
-    func##_last_cpuinfo_used = VP8GetCPUInfo;                       \
-    (void)pthread_mutex_unlock(&func##_lock);                       \
+#if _WIN32_WINNT >= 0x0600
+// clang-format off
+#define WEBP_DSP_INIT_VARS(func)               \
+  static VP8CPUInfo func##_last_cpuinfo_used = \
+      (VP8CPUInfo)&func##_last_cpuinfo_used;   \
+  static SRWLOCK func##_lock = SRWLOCK_INIT
+#define WEBP_DSP_INIT(func)                                \
+  do {                                                     \
+    AcquireSRWLockExclusive(&func##_lock);                 \
+    if (func##_last_cpuinfo_used != VP8GetCPUInfo) func(); \
+    func##_last_cpuinfo_used = VP8GetCPUInfo;              \
+    ReleaseSRWLockExclusive(&func##_lock);                 \
   } while (0)
-#else  // !(defined(WEBP_USE_THREAD) && !defined(_WIN32))
+// clang-format on
+#else   // _WIN32_WINNT < 0x0600
+// clang-format off
+#define WEBP_DSP_INIT_VARS(func)                        \
+  static volatile VP8CPUInfo func##_last_cpuinfo_used = \
+      (VP8CPUInfo)&func##_last_cpuinfo_used
 #define WEBP_DSP_INIT(func)                               \
   do {                                                    \
-    static volatile VP8CPUInfo func##_last_cpuinfo_used = \
-        (VP8CPUInfo)&func##_last_cpuinfo_used;            \
     if (func##_last_cpuinfo_used == VP8GetCPUInfo) break; \
     func();                                               \
     func##_last_cpuinfo_used = VP8GetCPUInfo;             \
   } while (0)
-#endif  // defined(WEBP_USE_THREAD) && !defined(_WIN32)
+// clang-format on
+#endif  // _WIN32_WINNT >= 0x0600
+#else   // !defined(_WIN32)
+// NOLINTNEXTLINE
+#include <pthread.h>
+
+#define WEBP_DSP_INIT_VARS(func)               \
+  static VP8CPUInfo func##_last_cpuinfo_used = \
+      (VP8CPUInfo)&func##_last_cpuinfo_used;   \
+  static pthread_mutex_t func##_lock = PTHREAD_MUTEX_INITIALIZER
+#define WEBP_DSP_INIT(func)                                \
+  do {                                                     \
+    if (pthread_mutex_lock(&func##_lock)) break;           \
+    if (func##_last_cpuinfo_used != VP8GetCPUInfo) func(); \
+    func##_last_cpuinfo_used = VP8GetCPUInfo;              \
+    (void)pthread_mutex_unlock(&func##_lock);              \
+  } while (0)
+#endif  // defined(_WIN32)
+#else   // !defined(WEBP_USE_THREAD)
+#define WEBP_DSP_INIT_VARS(func)                        \
+  static volatile VP8CPUInfo func##_last_cpuinfo_used = \
+      (VP8CPUInfo)&func##_last_cpuinfo_used
+#define WEBP_DSP_INIT(func)                               \
+  do {                                                    \
+    if (func##_last_cpuinfo_used == VP8GetCPUInfo) break; \
+    func();                                               \
+    func##_last_cpuinfo_used = VP8GetCPUInfo;             \
+  } while (0)
+#endif  // defined(WEBP_USE_THREAD)
 
 // Defines an Init + helper function that control multiple initialization of
 // function pointers / tables.
@@ -206,6 +256,7 @@
    }
 */
 #define WEBP_DSP_INIT_FUNC(name)                                            \
+  WEBP_DSP_INIT_VARS(name##_body);                                          \
   static WEBP_TSAN_IGNORE_FUNCTION void name##_body(void);                  \
   WEBP_TSAN_IGNORE_FUNCTION void name(void) { WEBP_DSP_INIT(name##_body); } \
   static WEBP_TSAN_IGNORE_FUNCTION void name##_body(void)

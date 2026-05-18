@@ -29,13 +29,6 @@ public:
     int getFrameDelay(int index);
     const Frame& getFrame(int index);
 
-    // DIB packaging (24-bit BGR bottom-up, 4-byte row stride).
-    // getDIBSize() returns the total byte size for writeDIB()'s output buffer.
-    // writeDIB() fills BITMAPINFOHEADER followed by pixel data; for animation,
-    // it advances the internal iterator (same contract as getFrame).
-    size_t getDIBSize() const;
-    void writeDIB(int page, void* out);
-
 private:
     // Image info
     int width_ = 0;

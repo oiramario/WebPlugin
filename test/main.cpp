@@ -42,12 +42,26 @@ int main(int argc, char* argv[]) {
     if (decoder.hasAnimated()) {
         int total_duration = 0;
         int nFrames = decoder.getFrameCount();
+        int stride = ((decoder.getWidth() * 3 + 3) / 4) * 4;
+        size_t imageSize = stride * decoder.getHeight();
+        size_t dibSize = sizeof(BITMAPINFOHEADER) + imageSize;
+
         for (int i = 0; i < nFrames; ++i) {
             char name[256] = {0};
             sprintf_s(name, 256, "d:\\%d.bmp", i);
 
-            std::vector<uint8_t> dib(decoder.getDIBSize());
-            decoder.writeDIB(i, dib.data());
+            const Frame& frame = decoder.getFrame(i);
+            std::vector<uint8_t> dib(dibSize);
+            BITMAPINFOHEADER bih = {};
+            bih.biSize        = sizeof(BITMAPINFOHEADER);
+            bih.biWidth       = decoder.getWidth();
+            bih.biHeight      = decoder.getHeight();
+            bih.biPlanes      = 1;
+            bih.biBitCount    = 24;
+            bih.biCompression = BI_RGB;
+            bih.biSizeImage   = imageSize;
+            memcpy(dib.data(), &bih, sizeof(BITMAPINFOHEADER));
+            memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data(), imageSize);
             SaveDIBToBMP(dib, name);
 
             std::cout << "  Frame " << i << ": " << decoder.getFrameDelay(i) << "ms" << std::endl;
@@ -55,8 +69,22 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "Total animation duration: " << total_duration << "ms" << std::endl;
     } else {
-        std::vector<uint8_t> dib(decoder.getDIBSize());
-        decoder.writeDIB(0, dib.data());
+        int stride = ((decoder.getWidth() * 3 + 3) / 4) * 4;
+        size_t imageSize = stride * decoder.getHeight();
+        size_t dibSize = sizeof(BITMAPINFOHEADER) + imageSize;
+
+        const Frame& frame = decoder.getFrame(0);
+        std::vector<uint8_t> dib(dibSize);
+        BITMAPINFOHEADER bih = {};
+        bih.biSize        = sizeof(BITMAPINFOHEADER);
+        bih.biWidth       = decoder.getWidth();
+        bih.biHeight      = decoder.getHeight();
+        bih.biPlanes      = 1;
+        bih.biBitCount    = 24;
+        bih.biCompression = BI_RGB;
+        bih.biSizeImage   = imageSize;
+        memcpy(dib.data(), &bih, sizeof(BITMAPINFOHEADER));
+        memcpy(dib.data() + sizeof(BITMAPINFOHEADER), frame.data(), imageSize);
         SaveDIBToBMP(dib, "d:\\1.bmp");
     }
 

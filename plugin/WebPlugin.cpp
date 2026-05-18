@@ -1,4 +1,4 @@
-#include "WebPlugin.h"
+﻿#include "WebPlugin.h"
 #include <windows.h>
 #include <shlobj.h>
 #include <string.h>
@@ -7,8 +7,6 @@
 
 HMODULE WebPlugin::g_hModule = NULL;
 
-// Write `value` to the default REG_SZ entry of (root, subKey) only if the current
-// value differs (or is absent). Returns true if a write actually happened.
 static bool SetRegStringIfChanged(HKEY root, const char* subKey, const char* value)
 {
     char existing[MAX_PATH + 16] = {0};
@@ -39,21 +37,17 @@ static void RegisterWebPIcon()
 
     bool changed = false;
 
-    // Read current ProgID for .webp
     char progID[128] = {0};
     DWORD size = sizeof(progID);
     if (RegGetValueA(HKEY_CLASSES_ROOT, ".webp", NULL, RRF_RT_REG_SZ, NULL, progID, &size) == ERROR_SUCCESS) {
-        // Override icon on existing ProgID under HKCU
         char keyPath[256];
         sprintf_s(keyPath, "Software\\Classes\\%s\\DefaultIcon", progID);
         changed |= SetRegStringIfChanged(HKEY_CURRENT_USER, keyPath, iconRef);
     } else {
-        // No ProgID: create minimal association with icon
         changed |= SetRegStringIfChanged(HKEY_CURRENT_USER, "Software\\Classes\\.webp", "WebP.Image");
         changed |= SetRegStringIfChanged(HKEY_CURRENT_USER, "Software\\Classes\\WebP.Image\\DefaultIcon", iconRef);
     }
 
-    // Only notify Explorer if we actually touched something
     if (changed) {
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
     }
@@ -61,7 +55,7 @@ static void RegisterWebPIcon()
 
 WebPlugin::WebPlugin()
 :   m_FormatInfo {
-        .dwFlags = 0, // CIF_REGISTERED
+        .dwFlags = 0,
         .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
         .szName = "MasterZ / oiramario",
         .szNameShort = "WEBP",
@@ -80,9 +74,6 @@ WebPlugin::WebPlugin()
         .pFormatInfo = &m_FormatInfo
     }
 {
-    // Force disable "Sharpen subsampled images" which causes hang
-    // on large animated WebP (takes effect next ACDSee launch).
-    // Only write if currently non-zero or missing.
     {
         HKEY hKey;
         if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\ACD Systems\\ACDSee Pro\\50",
@@ -100,7 +91,6 @@ WebPlugin::WebPlugin()
         }
     }
 
-    // Register WebP icon for Windows Explorer
     RegisterWebPIcon();
 }
 
@@ -134,9 +124,6 @@ void WebPlugin::ShowPlugInDialog(HWND hWndParent)
 
 int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
 {
-    // Ensure full file buffer is loaded (required for content inside archives like ZIP).
-    // Only needed when the filename is virtual (e.g. file inside a ZIP archive);
-    // standalone files already have the full buffer.
     if ((psi->dwFlags & SIF_VIRTUALFILENAME) && psi->pfFillBuffer && psi->dwLen > 0) {
         DWORD dwNewPos = 0;
         psi->pfFillBuffer(psi->pParam, psi->dwLen, &dwNewPos);
@@ -144,11 +131,13 @@ int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
 
     WebPDecoder* decoder = new (std::nothrow) WebPDecoder;
     if (!decoder) {
+        OutputDebugStringA("WebPlugin::OpenImage: new WebPDecoder FAILED -> IDE_Error");
         return IDE_Error;
     }
 
     if (!decoder->decode({psi->pBuf, psi->dwLen}))
     {
+        OutputDebugStringA("WebPlugin::OpenImage: decode() FAILED -> IDE_Error");
         delete decoder;
         return IDE_Error;
     }
@@ -175,6 +164,7 @@ int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
         WebPDecoder* decoder = (WebPDecoder*)hs;
         if (decoder->getFrameCount() == 0)
         {
+            OutputDebugStringA("WebPlugin::GetImageInfo: frameCount==0 -> IDE_CorruptData");
             return IDE_CorruptData;
         }
 
@@ -190,6 +180,7 @@ int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
     }
     else
     {
+        OutputDebugStringA("WebPlugin::GetImageInfo: hs is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
     }
 }
@@ -201,6 +192,9 @@ int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
         WebPDecoder* decoder = (WebPDecoder*)hs;
         int nPages = decoder->getFrameCount();
         if (iPage < 0 || iPage >= nPages) {
+            char buf[128];
+            sprintf_s(buf, "WebPlugin::GetPageInfo: iPage=%d out of range [0,%d) -> IDE_NoPage", iPage, nPages);
+            OutputDebugStringA(buf);
             return IDE_NoPage;
         }
 
@@ -216,33 +210,60 @@ int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
     }
     else
     {
+        OutputDebugStringA("WebPlugin::GetPageInfo: hs is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
     }
 }
 
 int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 {
-    if (!hs) return IDE_InvalidParam;
+    if (!hs) {
+        OutputDebugStringA("WebPlugin::PageDecode: hs is NULL -> IDE_InvalidParam");
+        return IDE_InvalidParam;
+    }
 
     WebPDecoder* decoder = (WebPDecoder*)hs;
     int nPages = decoder->getFrameCount();
     if (pdp->nPage < 0 || pdp->nPage >= nPages) {
+        char buf[128];
+        sprintf_s(buf, "WebPlugin::PageDecode: nPage=%d out of range -> IDE_NoPage", pdp->nPage);
+        OutputDebugStringA(buf);
         return IDE_NoPage;
     }
 
-    HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, decoder->getDIBSize());
+    const Frame& frame = decoder->getFrame(pdp->nPage);
+    int w = decoder->getWidth();
+    int h = decoder->getHeight();
+    int stride = ((w * 3 + 3) / 4) * 4;
+    size_t imageSize = stride * h;
+    size_t dibSize = sizeof(BITMAPINFOHEADER) + imageSize;
+
+    HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, dibSize);
     if (!hDIB) {
+        OutputDebugStringA("WebPlugin::PageDecode: GlobalAlloc FAILED -> IDE_Error");
         return IDE_Error;
     }
-    decoder->writeDIB(pdp->nPage, hDIB);
+
+    BITMAPINFOHEADER bih = {};
+    bih.biSize        = sizeof(BITMAPINFOHEADER);
+    bih.biWidth       = w;
+    bih.biHeight      = h;
+    bih.biPlanes      = 1;
+    bih.biBitCount    = 24;
+    bih.biCompression = BI_RGB;
+    bih.biSizeImage   = imageSize;
+
+    uint8_t* dst = static_cast<uint8_t*>(hDIB);
+    memcpy(dst, &bih, sizeof(BITMAPINFOHEADER));
+    memcpy(dst + sizeof(BITMAPINFOHEADER), frame.data(), imageSize);
 
     pio->dwFlags = 0;
     pio->hdib = hDIB;
     pio->hemf = NULL;
     pio->rc.left = 0;
     pio->rc.top = 0;
-    pio->rc.right = decoder->getWidth();
-    pio->rc.bottom = decoder->getHeight();
+    pio->rc.right = w;
+    pio->rc.bottom = h;
     pio->pParamEx = NULL;
 
     return IDE_OK;

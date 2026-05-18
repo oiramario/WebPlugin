@@ -18,7 +18,7 @@ WebPDecoder::~WebPDecoder() {
 bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     WebPBitstreamFeatures features;
     if (WebPGetFeatures(bytes.data(), bytes.size(), &features) != VP8_STATUS_OK) {
-        OutputDebugStringA("WebPDecoder: Failed to get WebP features\n");
+        OutputDebugStringA("WebPDecoder::decode: WebPGetFeatures FAILED");
         return false;
     }
 
@@ -27,35 +27,32 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     has_alpha_ = (features.has_alpha != 0);
     has_animation_ = features.has_animation;
 
-    // Pre-allocate frame buffer - ACDSee only supports 24-bit BGR DIB, so 3 BPP
-    frame_stride_ = ((width_ * 3 + 3) / 4) * 4;
-    current_frame_.resize(frame_stride_ * height_);
-
     src_bytes_ = bytes;
+
+    frame_stride_ = ((width_ * 3 + 3) / 4) * 4;
+    current_frame_.resize(static_cast<size_t>(frame_stride_) * height_);
 
     if (has_animation_) {
         WebPAnimDecoderOptions options;
         WebPAnimDecoderOptionsInit(&options);
-        // WebPAnimDecoder rejects non-alpha modes (like MODE_BGR) in ApplyDecoderOptions.
-        // Alpha is also needed for inter-frame blending during compositing.
         options.color_mode = MODE_BGRA;
 
         WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
         anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
         if (!anim_decoder_) {
-            OutputDebugStringA("WebPDecoder: Failed to create WebP animation decoder\n");
+            OutputDebugStringA("WebPDecoder::decode: WebPAnimDecoderNew FAILED");
             return false;
         }
 
         WebPAnimInfo anim_info;
         if (!WebPAnimDecoderGetInfo(anim_decoder_, &anim_info)) {
-            OutputDebugStringA("WebPDecoder: Failed to get WebP animation info\n");
+            OutputDebugStringA("WebPDecoder::decode: WebPAnimDecoderGetInfo FAILED");
             return false;
         }
 
         total_frames_ = anim_info.frame_count;
         if (total_frames_ == 0) {
-            OutputDebugStringA("WebPDecoder: No frames in animation\n");
+            OutputDebugStringA("WebPDecoder::decode: frame_count == 0");
             return false;
         }
     } else {
@@ -65,12 +62,12 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     return true;
 }
 
-const Frame& WebPDecoder::getFrame(int index) {
+const Frame& WebPDecoder::getFrame(int /*index*/) {
     if (!has_animation_) {
-        uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
         if (!has_alpha_) {
             uint8_t* pixels = WebPDecodeBGR(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
             if (pixels) {
+                uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
                 for (int y = 0; y < height_; y++) {
                     memcpy(dst, pixels + y * width_ * 3, width_ * 3);
                     dst -= frame_stride_;
@@ -85,11 +82,13 @@ const Frame& WebPDecoder::getFrame(int index) {
             }
         }
     } else {
-        // ACDSee guarantees 0..n-1 sequential access.
         uint8_t* pixels = nullptr;
         int timestamp = 0;
-        if (WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp))
+        if (WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
             compositeBGRAtoBGR(pixels);
+        } else {
+            OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED");
+        }
     }
     return current_frame_;
 }
@@ -99,7 +98,6 @@ int WebPDecoder::getFrameDelay(int index) {
         return 0;
     }
 
-    // Lazily extract frame delay table on first access.
     if (!delays_loaded_) {
         constexpr int kDefaultFrameDelayMs = 100;
         frame_delays_.reserve(total_frames_);
@@ -141,7 +139,6 @@ void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra) {
                     dp[0] = bg; dp[1] = bg; dp[2] = bg;
                 } else {
                     uint32_t inv = 255u - a;
-                    // (n + 1 + (n >> 8)) >> 8  ==  n / 255  for n in [0, 65280]; max here is 255*255.
                     uint32_t b0 = sp[0] * a + bg * inv;
                     uint32_t b1 = sp[1] * a + bg * inv;
                     uint32_t b2 = sp[2] * a + bg * inv;
@@ -157,24 +154,3 @@ void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra) {
     }
 }
 
-size_t WebPDecoder::getDIBSize() const {
-    return sizeof(BITMAPINFOHEADER) + static_cast<size_t>(frame_stride_) * height_;
-}
-
-void WebPDecoder::writeDIB(int page, void* out) {
-    const Frame& frame = getFrame(page);
-    const int imageSize = frame_stride_ * height_;
-
-    BITMAPINFOHEADER bih = {};
-    bih.biSize        = sizeof(BITMAPINFOHEADER);
-    bih.biWidth       = width_;
-    bih.biHeight      = height_;
-    bih.biPlanes      = 1;
-    bih.biBitCount    = 24;
-    bih.biCompression = BI_RGB;
-    bih.biSizeImage   = imageSize;
-
-    uint8_t* dst = static_cast<uint8_t*>(out);
-    memcpy(dst, &bih, sizeof(BITMAPINFOHEADER));
-    memcpy(dst + sizeof(BITMAPINFOHEADER), frame.data(), imageSize);
-}
