@@ -124,6 +124,18 @@ void WebPlugin::ShowPlugInDialog(HWND hWndParent)
 
 int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
 {
+    {
+        char buf[512];
+        sprintf_s(buf, "WebPlugin::OpenImage: dwFlags=0x%lX pszFN=%s pBuf=%p dwLen=%lu pfFillBuffer=%p pParam=%p",
+                  psi->dwFlags,
+                  psi->pszFN ? psi->pszFN : "(null)",
+                  psi->pBuf,
+                  psi->dwLen,
+                  psi->pfFillBuffer,
+                  psi->pParam);
+        OutputDebugStringA(buf);
+    }
+
     if ((psi->dwFlags & SIF_VIRTUALFILENAME) && psi->pfFillBuffer && psi->dwLen > 0) {
         DWORD dwNewPos = 0;
         psi->pfFillBuffer(psi->pParam, psi->dwLen, &dwNewPos);
@@ -143,11 +155,23 @@ int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
     }
 
     *phs = decoder;
+    {
+        char buf[256];
+        sprintf_s(buf, "WebPlugin::OpenImage: -> hs=%p (anim=%d frames=%d %dx%d)",
+                  *phs, decoder->hasAnimated(), decoder->getFrameCount(),
+                  decoder->getWidth(), decoder->getHeight());
+        OutputDebugStringA(buf);
+    }
     return IDE_OK;
 }
 
 int WebPlugin::CloseImage(ID_StateHdl hs)
 {
+    {
+        char buf[128];
+        sprintf_s(buf, "WebPlugin::CloseImage: hs=%p", hs);
+        OutputDebugStringA(buf);
+    }
     if (hs)
     {
         WebPDecoder* decoder = (WebPDecoder*)hs;
@@ -159,6 +183,11 @@ int WebPlugin::CloseImage(ID_StateHdl hs)
 
 int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
 {
+    {
+        char buf[128];
+        sprintf_s(buf, "WebPlugin::GetImageInfo: hs=%p", hs);
+        OutputDebugStringA(buf);
+    }
     if (hs)
     {
         WebPDecoder* decoder = (WebPDecoder*)hs;
@@ -187,6 +216,11 @@ int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
 
 int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
 {
+    {
+        char buf[128];
+        sprintf_s(buf, "WebPlugin::GetPageInfo: hs=%p iPage=%d", hs, iPage);
+        OutputDebugStringA(buf);
+    }
     if (hs)
     {
         WebPDecoder* decoder = (WebPDecoder*)hs;
@@ -217,6 +251,12 @@ int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
 
 int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 {
+    {
+        char buf[256];
+        sprintf_s(buf, "WebPlugin::PageDecode: hs=%p nPage=%d nWidth=%d nHeight=%d dwFlags=0x%lX quality=%d",
+                  hs, pdp->nPage, pdp->nWidth, pdp->nHeight, pdp->dwFlags, pdp->quality);
+        OutputDebugStringA(buf);
+    }
     if (!hs) {
         OutputDebugStringA("WebPlugin::PageDecode: hs is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
@@ -231,25 +271,10 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
         return IDE_NoPage;
     }
 
-    const Frame& frame = decoder->getFrame(pdp->nPage);
     const int srcW = decoder->getWidth();
     const int srcH = decoder->getHeight();
-    const int srcStride = decoder->getFrameStride();
-
-    const bool doResize = pdp->nWidth > 0 && pdp->nHeight > 0
-                       && (pdp->nWidth != srcW || pdp->nHeight != srcH);
-    const int dstW = doResize ? pdp->nWidth  : srcW;
-    const int dstH = doResize ? pdp->nHeight : srcH;
-
-    if (doResize) {
-        char buf[128];
-        sprintf_s(buf, "WebPlugin::PageDecode: resize %dx%d -> %dx%d",
-                  srcW, srcH, dstW, dstH);
-        OutputDebugStringA(buf);
-    }
-
-    const int dstStride  = ((dstW * 3 + 3) / 4) * 4;
-    const size_t imageSize = static_cast<size_t>(dstStride) * dstH;
+    const int dstStride  = ((srcW * 3 + 3) / 4) * 4;
+    const size_t imageSize = static_cast<size_t>(dstStride) * srcH;
     const size_t dibSize   = sizeof(BITMAPINFOHEADER) + imageSize;
 
     HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, dibSize);
@@ -260,8 +285,8 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     BITMAPINFOHEADER* pBih = static_cast<BITMAPINFOHEADER*>(hDIB);
     pBih->biSize        = sizeof(BITMAPINFOHEADER);
-    pBih->biWidth       = dstW;
-    pBih->biHeight      = dstH;
+    pBih->biWidth       = srcW;
+    pBih->biHeight      = srcH;
     pBih->biPlanes      = 1;
     pBih->biBitCount    = 24;
     pBih->biCompression = BI_RGB;
@@ -269,23 +294,15 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     uint8_t* pDst = reinterpret_cast<uint8_t*>(hDIB) + sizeof(BITMAPINFOHEADER);
 
-    if (!doResize) {
-        memcpy(pDst, frame.data(), imageSize);
-    } else {
-        avir::CLancIRParams params;
-        params.SrcSSize = srcStride;
-        params.NewSSize = dstStride;
-        m_Resizer.resizeImage(frame.data(), srcW, srcH,
-                              pDst, dstW, dstH, 3, &params);
-    }
+    decoder->getFrame(pdp->nPage, pDst, dstStride);
 
     pio->dwFlags = 0;
     pio->hdib = hDIB;
     pio->hemf = NULL;
     pio->rc.left = 0;
     pio->rc.top = 0;
-    pio->rc.right = dstW;
-    pio->rc.bottom = dstH;
+    pio->rc.right = srcW;
+    pio->rc.bottom = srcH;
     pio->pParamEx = NULL;
 
     return IDE_OK;

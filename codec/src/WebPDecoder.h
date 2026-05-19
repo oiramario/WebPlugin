@@ -5,8 +5,6 @@
 #include <span>
 #include <vector>
 
-using Frame = std::vector<uint8_t>;
-
 struct WebPAnimDecoder;
 
 class WebPDecoder {
@@ -25,10 +23,12 @@ public:
     int getWidth() const { return width_; }
     int getHeight() const { return height_; }
     int getBitsPerSample() const { return 8; }
-    int getFrameStride() const { return frame_stride_; }
     int getFrameCount() const { return has_animation_ ? total_frames_ : 1; }
     int getFrameDelay(int index);
-    const Frame& getFrame(int index);
+    // Fast path for frame 0 delay (pre-extracted in decode(), no lazy scan).
+    int getFrame0Delay() const { return frame_0_delay_; }
+    // Decodes frame into dst as 24-bit BGR bottom-up DIB with given stride.
+    void getFrame(int index, uint8_t* dst, int stride);
 
 private:
     // Image info
@@ -38,19 +38,18 @@ private:
     bool has_animation_ = false;
     int total_frames_ = 0;
 
-    // Frame buffer (ACDSee only supports 24-bit BGR DIB)
-    int frame_stride_ = 0;
-    Frame current_frame_;
-
     // Non-owning view of caller's bytes (for static lazy decode and animation).
     std::span<const uint8_t> src_bytes_;
     WebPAnimDecoder* anim_decoder_ = nullptr;
     std::vector<int> frame_delays_;
     bool delays_loaded_ = false;
+    int frame_0_delay_ = 0;
 
-    // BGRA top-down → BGR bottom-up into current_frame_,
+    bool ensureAnimDecoder();
+
+    // BGRA top-down → BGR bottom-up into dst,
     // translucent pixels composited against a checkerboard background.
-    void compositeBGRAtoBGR(const uint8_t* src_bgra);
+    void compositeBGRAtoBGR(const uint8_t* src_bgra, uint8_t* dst, int out_stride);
 };
 
 #endif // WEBP_DECODER_H

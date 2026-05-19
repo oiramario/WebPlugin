@@ -20,7 +20,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${CMAKE_SOURCE_DIR}/avir
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

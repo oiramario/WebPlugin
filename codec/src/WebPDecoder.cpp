@@ -7,6 +7,7 @@
 static constexpr int kCheckerCell = 8;
 static constexpr uint8_t kCheckerLight = 224;
 static constexpr uint8_t kCheckerDark = 192;
+static constexpr int kDefaultFrameDelayMs = 100;
 
 WebPDecoder::~WebPDecoder() {
     if (anim_decoder_) {
@@ -29,28 +30,28 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
 
     src_bytes_ = bytes;
 
-    frame_stride_ = ((width_ * 3 + 3) / 4) * 4;
-    current_frame_.resize(static_cast<size_t>(frame_stride_) * height_);
-
     if (has_animation_) {
-        WebPAnimDecoderOptions options;
-        WebPAnimDecoderOptionsInit(&options);
-        options.color_mode = MODE_BGRA;
-
         WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
-        anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
-        if (!anim_decoder_) {
-            OutputDebugStringA("WebPDecoder::decode: WebPAnimDecoderNew FAILED");
+        WebPDemuxer* demux = WebPDemux(&webp_data);
+        if (!demux) {
+            OutputDebugStringA("WebPDecoder::decode: WebPDemux FAILED");
             return false;
         }
 
-        WebPAnimInfo anim_info;
-        if (!WebPAnimDecoderGetInfo(anim_decoder_, &anim_info)) {
-            OutputDebugStringA("WebPDecoder::decode: WebPAnimDecoderGetInfo FAILED");
-            return false;
+        total_frames_ = (int)WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
+
+        // Pre-extract frame 0 delay so metadata-only GetPageInfo(0) calls
+        // (~85% of OpenImage) never trigger a second WebPDemux scan.
+        WebPIterator iter;
+        if (WebPDemuxGetFrame(demux, 1, &iter)) {
+            frame_0_delay_ = iter.duration > 0 ? iter.duration : kDefaultFrameDelayMs;
+            WebPDemuxReleaseIterator(&iter);
+        } else {
+            frame_0_delay_ = kDefaultFrameDelayMs;
         }
 
-        total_frames_ = anim_info.frame_count;
+        WebPDemuxDelete(demux);
+
         if (total_frames_ == 0) {
             OutputDebugStringA("WebPDecoder::decode: frame_count == 0");
             return false;
@@ -62,35 +63,55 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     return true;
 }
 
-const Frame& WebPDecoder::getFrame(int /*index*/) {
+void WebPDecoder::getFrame(int /*index*/, uint8_t* dst, int stride) {
     if (!has_animation_) {
         if (!has_alpha_) {
             uint8_t* pixels = WebPDecodeBGR(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
             if (pixels) {
-                uint8_t* dst = current_frame_.data() + (height_ - 1) * frame_stride_;
+                uint8_t* d = dst + (height_ - 1) * stride;
                 for (int y = 0; y < height_; y++) {
-                    memcpy(dst, pixels + y * width_ * 3, width_ * 3);
-                    dst -= frame_stride_;
+                    memcpy(d, pixels + y * width_ * 3, width_ * 3);
+                    d -= stride;
                 }
                 WebPFree(pixels);
             }
         } else {
             uint8_t* pixels = WebPDecodeBGRA(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
             if (pixels) {
-                compositeBGRAtoBGR(pixels);
+                compositeBGRAtoBGR(pixels, dst, stride);
                 WebPFree(pixels);
             }
         }
     } else {
+        if (!ensureAnimDecoder()) {
+            return;
+        }
+
         uint8_t* pixels = nullptr;
         int timestamp = 0;
         if (WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
-            compositeBGRAtoBGR(pixels);
+            compositeBGRAtoBGR(pixels, dst, stride);
         } else {
             OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED");
         }
     }
-    return current_frame_;
+}
+
+bool WebPDecoder::ensureAnimDecoder() {
+    if (anim_decoder_) return true;
+
+    WebPAnimDecoderOptions options;
+    WebPAnimDecoderOptionsInit(&options);
+    options.color_mode = MODE_BGRA;
+
+    WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
+    anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
+    if (!anim_decoder_) {
+        OutputDebugStringA("WebPDecoder::ensureAnimDecoder: WebPAnimDecoderNew FAILED");
+        return false;
+    }
+
+    return true;
 }
 
 int WebPDecoder::getFrameDelay(int index) {
@@ -98,8 +119,12 @@ int WebPDecoder::getFrameDelay(int index) {
         return 0;
     }
 
+    // Frame 0 delay was pre-extracted in decode(), no need to scan.
+    if (index == 0) {
+        return frame_0_delay_;
+    }
+
     if (!delays_loaded_) {
-        constexpr int kDefaultFrameDelayMs = 100;
         frame_delays_.reserve(total_frames_);
         WebPData d = {src_bytes_.data(), src_bytes_.size()};
         WebPDemuxer* demux = WebPDemux(&d);
@@ -123,8 +148,8 @@ int WebPDecoder::getFrameDelay(int index) {
     return frame_delays_[index];
 }
 
-void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra) {
-    uint8_t* out = current_frame_.data() + (height_ - 1) * frame_stride_;
+void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra, uint8_t* dst_buffer, int stride) {
+    uint8_t* out = dst_buffer + (height_ - 1) * stride;
     for (int y = 0; y < height_; y++) {
         const uint8_t* sp = src_bgra + y * width_ * 4;
         uint8_t* dp = out;
@@ -150,7 +175,7 @@ void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra) {
             sp += 4;
             dp += 3;
         }
-        out -= frame_stride_;
+        out -= stride;
     }
 }
 
