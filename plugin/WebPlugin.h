@@ -2,6 +2,7 @@
 #define WebPlugin_h
 
 #include "ID_PlugIn.h"
+#include "lancir.h"
 
 class WebPlugin
 {
@@ -23,6 +24,7 @@ private:
 
     ID_FormatInfo m_FormatInfo;
     ID_PlugInInfo m_PlugInInfo;
+    avir::CLancIR m_Resizer;
 
 public:
     static HMODULE g_hModule;

@@ -25,6 +25,7 @@ public:
     int getWidth() const { return width_; }
     int getHeight() const { return height_; }
     int getBitsPerSample() const { return 8; }
+    int getFrameStride() const { return frame_stride_; }
     int getFrameCount() const { return has_animation_ ? total_frames_ : 1; }
     int getFrameDelay(int index);
     const Frame& getFrame(int index);

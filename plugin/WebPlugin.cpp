@@ -232,11 +232,25 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
     }
 
     const Frame& frame = decoder->getFrame(pdp->nPage);
-    int w = decoder->getWidth();
-    int h = decoder->getHeight();
-    int stride = ((w * 3 + 3) / 4) * 4;
-    size_t imageSize = stride * h;
-    size_t dibSize = sizeof(BITMAPINFOHEADER) + imageSize;
+    const int srcW = decoder->getWidth();
+    const int srcH = decoder->getHeight();
+    const int srcStride = decoder->getFrameStride();
+
+    const bool doResize = pdp->nWidth > 0 && pdp->nHeight > 0
+                       && (pdp->nWidth != srcW || pdp->nHeight != srcH);
+    const int dstW = doResize ? pdp->nWidth  : srcW;
+    const int dstH = doResize ? pdp->nHeight : srcH;
+
+    if (doResize) {
+        char buf[128];
+        sprintf_s(buf, "WebPlugin::PageDecode: resize %dx%d -> %dx%d",
+                  srcW, srcH, dstW, dstH);
+        OutputDebugStringA(buf);
+    }
+
+    const int dstStride  = ((dstW * 3 + 3) / 4) * 4;
+    const size_t imageSize = static_cast<size_t>(dstStride) * dstH;
+    const size_t dibSize   = sizeof(BITMAPINFOHEADER) + imageSize;
 
     HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, dibSize);
     if (!hDIB) {
@@ -244,26 +258,34 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
         return IDE_Error;
     }
 
-    BITMAPINFOHEADER bih = {};
-    bih.biSize        = sizeof(BITMAPINFOHEADER);
-    bih.biWidth       = w;
-    bih.biHeight      = h;
-    bih.biPlanes      = 1;
-    bih.biBitCount    = 24;
-    bih.biCompression = BI_RGB;
-    bih.biSizeImage   = imageSize;
+    BITMAPINFOHEADER* pBih = static_cast<BITMAPINFOHEADER*>(hDIB);
+    pBih->biSize        = sizeof(BITMAPINFOHEADER);
+    pBih->biWidth       = dstW;
+    pBih->biHeight      = dstH;
+    pBih->biPlanes      = 1;
+    pBih->biBitCount    = 24;
+    pBih->biCompression = BI_RGB;
+    pBih->biSizeImage   = static_cast<DWORD>(imageSize);
 
-    uint8_t* dst = static_cast<uint8_t*>(hDIB);
-    memcpy(dst, &bih, sizeof(BITMAPINFOHEADER));
-    memcpy(dst + sizeof(BITMAPINFOHEADER), frame.data(), imageSize);
+    uint8_t* pDst = reinterpret_cast<uint8_t*>(hDIB) + sizeof(BITMAPINFOHEADER);
+
+    if (!doResize) {
+        memcpy(pDst, frame.data(), imageSize);
+    } else {
+        avir::CLancIRParams params;
+        params.SrcSSize = srcStride;
+        params.NewSSize = dstStride;
+        m_Resizer.resizeImage(frame.data(), srcW, srcH,
+                              pDst, dstW, dstH, 3, &params);
+    }
 
     pio->dwFlags = 0;
     pio->hdib = hDIB;
     pio->hemf = NULL;
     pio->rc.left = 0;
     pio->rc.top = 0;
-    pio->rc.right = w;
-    pio->rc.bottom = h;
+    pio->rc.right = dstW;
+    pio->rc.bottom = dstH;
     pio->pParamEx = NULL;
 
     return IDE_OK;
