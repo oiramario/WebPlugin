@@ -25,8 +25,6 @@ public:
     int getBitsPerSample() const { return 8; }
     int getFrameCount() const { return has_animation_ ? total_frames_ : 1; }
     int getFrameDelay(int index);
-    // Fast path for frame 0 delay (pre-extracted in decode(), no lazy scan).
-    int getFrame0Delay() const { return frame_0_delay_; }
     // Decodes frame into dst as 24-bit BGR bottom-up DIB with given stride.
     // Returns false if the underlying decode fails (dst contents undefined).
     bool getFrame(int index, uint8_t* dst, int stride);
@@ -43,8 +41,6 @@ private:
     std::span<const uint8_t> src_bytes_;
     WebPAnimDecoder* anim_decoder_ = nullptr;
     std::vector<int> frame_delays_;
-    bool delays_loaded_ = false;
-    int frame_0_delay_ = 0;
 
     bool ensureAnimDecoder();
 

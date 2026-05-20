@@ -277,7 +277,21 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, dibSize);
     if (!hDIB) {
-        OutputDebugStringA("WebPlugin::PageDecode: GlobalAlloc FAILED -> IDE_TooBig");
+        DWORD err = GetLastError();
+        MEMORYSTATUSEX ms = {};
+        ms.dwLength = sizeof(ms);
+        GlobalMemoryStatusEx(&ms);
+        char buf[256];
+        sprintf_s(buf,
+            "WebPlugin::PageDecode: GlobalAlloc FAILED"
+            " frame=%d/%d size=%dx%d dibSize=%zu KB"
+            " availVirt=%zu MB availPhys=%zu MB LastError=%lu -> IDE_TooBig",
+            pdp->nPage, nPages,
+            srcW, srcH, dibSize / 1024,
+            (size_t)ms.ullAvailVirtual / (1024*1024),
+            (size_t)ms.ullAvailPhys    / (1024*1024),
+            err);
+        OutputDebugStringA(buf);
         return IDE_TooBig;
     }
 

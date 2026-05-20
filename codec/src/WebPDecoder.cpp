@@ -40,22 +40,24 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
 
         total_frames_ = (int)WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
 
-        // Pre-extract frame 0 delay so metadata-only GetPageInfo(0) calls
-        // (~85% of OpenImage) never trigger a second WebPDemux scan.
-        WebPIterator iter;
-        if (WebPDemuxGetFrame(demux, 1, &iter)) {
-            frame_0_delay_ = iter.duration > 0 ? iter.duration : kDefaultFrameDelayMs;
-            WebPDemuxReleaseIterator(&iter);
-        } else {
-            frame_0_delay_ = kDefaultFrameDelayMs;
-        }
-
-        WebPDemuxDelete(demux);
-
         if (total_frames_ == 0) {
+            WebPDemuxDelete(demux);
             OutputDebugStringA("WebPDecoder::decode: frame_count == 0");
             return false;
         }
+
+        frame_delays_.resize(total_frames_);
+        for (int i = 0; i < total_frames_; i++) {
+            WebPIterator iter;
+            if (WebPDemuxGetFrame(demux, i + 1, &iter)) {
+                frame_delays_[i] = iter.duration > 0 ? iter.duration : kDefaultFrameDelayMs;
+                WebPDemuxReleaseIterator(&iter);
+            } else {
+                frame_delays_[i] = kDefaultFrameDelayMs;
+            }
+        }
+
+        WebPDemuxDelete(demux);
     } else {
         total_frames_ = 1;
     }
@@ -107,6 +109,7 @@ bool WebPDecoder::ensureAnimDecoder() {
     WebPAnimDecoderOptions options;
     WebPAnimDecoderOptionsInit(&options);
     options.color_mode = MODE_BGRA;
+    options.use_threads = 1;
 
     WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
     anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
@@ -119,36 +122,8 @@ bool WebPDecoder::ensureAnimDecoder() {
 }
 
 int WebPDecoder::getFrameDelay(int index) {
-    if (!has_animation_ || index < 0 || index >= total_frames_) {
+    if (!has_animation_ || index < 0 || index >= total_frames_)
         return 0;
-    }
-
-    // Frame 0 delay was pre-extracted in decode(), no need to scan.
-    if (index == 0) {
-        return frame_0_delay_;
-    }
-
-    if (!delays_loaded_) {
-        frame_delays_.reserve(total_frames_);
-        WebPData d = {src_bytes_.data(), src_bytes_.size()};
-        WebPDemuxer* demux = WebPDemux(&d);
-        if (demux) {
-            for (int i = 1; i <= total_frames_; i++) {
-                WebPIterator iter;
-                if (WebPDemuxGetFrame(demux, i, &iter)) {
-                    frame_delays_.push_back(iter.duration > 0 ? iter.duration : kDefaultFrameDelayMs);
-                    WebPDemuxReleaseIterator(&iter);
-                } else {
-                    frame_delays_.push_back(kDefaultFrameDelayMs);
-                }
-            }
-            WebPDemuxDelete(demux);
-        } else {
-            frame_delays_.assign(total_frames_, kDefaultFrameDelayMs);
-        }
-        delays_loaded_ = true;
-    }
-
     return frame_delays_[index];
 }
 
