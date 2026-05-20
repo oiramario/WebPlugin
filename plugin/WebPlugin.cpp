@@ -135,6 +135,10 @@ int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
                   psi->pParam);
         OutputDebugStringA(buf);
     }
+    if (!psi || !phs) {
+        OutputDebugStringA("WebPlugin::OpenImage: psi or phs is NULL -> IDE_InvalidParam");
+        return IDE_InvalidParam;
+    }
 
     if ((psi->dwFlags & SIF_VIRTUALFILENAME) && psi->pfFillBuffer && psi->dwLen > 0) {
         DWORD dwNewPos = 0;
@@ -143,15 +147,15 @@ int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
 
     WebPDecoder* decoder = new (std::nothrow) WebPDecoder;
     if (!decoder) {
-        OutputDebugStringA("WebPlugin::OpenImage: new WebPDecoder FAILED -> IDE_Error");
-        return IDE_Error;
+        OutputDebugStringA("WebPlugin::OpenImage: new WebPDecoder FAILED -> IDE_FatalError");
+        return IDE_FatalError;
     }
 
     if (!decoder->decode({psi->pBuf, psi->dwLen}))
     {
-        OutputDebugStringA("WebPlugin::OpenImage: decode() FAILED -> IDE_Error");
+        OutputDebugStringA("WebPlugin::OpenImage: decode() FAILED -> IDE_UnknownFormat");
         delete decoder;
-        return IDE_Error;
+        return IDE_UnknownFormat;
     }
 
     *phs = decoder;
@@ -188,30 +192,27 @@ int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
         sprintf_s(buf, "WebPlugin::GetImageInfo: hs=%p", hs);
         OutputDebugStringA(buf);
     }
-    if (hs)
-    {
-        WebPDecoder* decoder = (WebPDecoder*)hs;
-        if (decoder->getFrameCount() == 0)
-        {
-            OutputDebugStringA("WebPlugin::GetImageInfo: frameCount==0 -> IDE_CorruptData");
-            return IDE_CorruptData;
-        }
-
-        pii->dwFlags = decoder->hasAnimated() ? (IIF_ANIM | IIF_MULTIPAGE) : 0;
-        pii->dwFormatID = MAKE_FORMATID('W', 'E', 'B', 'P');
-        pii->si.cx = decoder->getWidth();
-        pii->si.cy = decoder->getHeight();
-        pii->nBPS = decoder->getBitsPerSample();
-        pii->nSPP = decoder->hasAlpha() ? 4 : 3;
-        pii->nPages = decoder->getFrameCount();
-
-        return IDE_OK;
-    }
-    else
-    {
+    if (!hs) {
         OutputDebugStringA("WebPlugin::GetImageInfo: hs is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
     }
+
+    WebPDecoder* decoder = (WebPDecoder*)hs;
+    if (decoder->getFrameCount() == 0)
+    {
+        OutputDebugStringA("WebPlugin::GetImageInfo: frameCount==0 -> IDE_CorruptData");
+        return IDE_CorruptData;
+    }
+
+    pii->dwFlags = decoder->hasAnimated() ? (IIF_ANIM | IIF_MULTIPAGE) : 0;
+    pii->dwFormatID = MAKE_FORMATID('W', 'E', 'B', 'P');
+    pii->si.cx = decoder->getWidth();
+    pii->si.cy = decoder->getHeight();
+    pii->nBPS = decoder->getBitsPerSample();
+    pii->nSPP = decoder->hasAlpha() ? 4 : 3;
+    pii->nPages = decoder->getFrameCount();
+
+    return IDE_OK;
 }
 
 int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
@@ -221,32 +222,29 @@ int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
         sprintf_s(buf, "WebPlugin::GetPageInfo: hs=%p iPage=%d", hs, iPage);
         OutputDebugStringA(buf);
     }
-    if (hs)
-    {
-        WebPDecoder* decoder = (WebPDecoder*)hs;
-        int nPages = decoder->getFrameCount();
-        if (iPage < 0 || iPage >= nPages) {
-            char buf[128];
-            sprintf_s(buf, "WebPlugin::GetPageInfo: iPage=%d out of range [0,%d) -> IDE_NoPage", iPage, nPages);
-            OutputDebugStringA(buf);
-            return IDE_NoPage;
-        }
-
-        ppi->dwFlags = decoder->hasAlpha() ? PPF_RGB | PPF_ALPHA : PPF_RGB;
-        ppi->nSPP = decoder->hasAlpha() ? 4 : 3;
-        ppi->si.cx = decoder->getWidth();
-        ppi->si.cy = decoder->getHeight();
-        ppi->nBPS = decoder->getBitsPerSample();
-        ppi->nDelay = decoder->getFrameDelay(iPage);
-        ppi->szTitle[0] = 0;
-
-        return IDE_OK;
-    }
-    else
+    if (!hs)
     {
         OutputDebugStringA("WebPlugin::GetPageInfo: hs is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
     }
+    WebPDecoder* decoder = (WebPDecoder*)hs;
+    int nPages = decoder->getFrameCount();
+    if (iPage < 0 || iPage >= nPages) {
+        char buf[128];
+        sprintf_s(buf, "WebPlugin::GetPageInfo: iPage=%d out of range [0,%d) -> IDE_NoPage", iPage, nPages);
+        OutputDebugStringA(buf);
+        return IDE_NoPage;
+    }
+
+    ppi->dwFlags = decoder->hasAlpha() ? PPF_RGB | PPF_ALPHA : PPF_RGB;
+    ppi->nSPP = decoder->hasAlpha() ? 4 : 3;
+    ppi->si.cx = decoder->getWidth();
+    ppi->si.cy = decoder->getHeight();
+    ppi->nBPS = decoder->getBitsPerSample();
+    ppi->nDelay = decoder->getFrameDelay(iPage);
+    ppi->szTitle[0] = 0;
+
+    return IDE_OK;
 }
 
 int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
@@ -257,8 +255,8 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
                   hs, pdp->nPage, pdp->nWidth, pdp->nHeight, pdp->dwFlags, pdp->quality);
         OutputDebugStringA(buf);
     }
-    if (!hs) {
-        OutputDebugStringA("WebPlugin::PageDecode: hs is NULL -> IDE_InvalidParam");
+    if (!hs || !pdp || !pio) {
+        OutputDebugStringA("WebPlugin::PageDecode: hs, pdp, or pio is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
     }
 
@@ -279,8 +277,8 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, dibSize);
     if (!hDIB) {
-        OutputDebugStringA("WebPlugin::PageDecode: GlobalAlloc FAILED -> IDE_Error");
-        return IDE_Error;
+        OutputDebugStringA("WebPlugin::PageDecode: GlobalAlloc FAILED -> IDE_TooBig");
+        return IDE_TooBig;
     }
 
     BITMAPINFOHEADER* pBih = static_cast<BITMAPINFOHEADER*>(hDIB);
@@ -294,7 +292,11 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     uint8_t* pDst = reinterpret_cast<uint8_t*>(hDIB) + sizeof(BITMAPINFOHEADER);
 
-    decoder->getFrame(pdp->nPage, pDst, dstStride);
+    if (!decoder->getFrame(pdp->nPage, pDst, dstStride)) {
+        GlobalFree(hDIB);
+        OutputDebugStringA("WebPlugin::PageDecode: getFrame FAILED -> IDE_CorruptData");
+        return IDE_CorruptData;
+    }
 
     pio->dwFlags = 0;
     pio->hdib = hDIB;

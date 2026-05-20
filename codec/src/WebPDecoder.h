@@ -28,7 +28,8 @@ public:
     // Fast path for frame 0 delay (pre-extracted in decode(), no lazy scan).
     int getFrame0Delay() const { return frame_0_delay_; }
     // Decodes frame into dst as 24-bit BGR bottom-up DIB with given stride.
-    void getFrame(int index, uint8_t* dst, int stride);
+    // Returns false if the underlying decode fails (dst contents undefined).
+    bool getFrame(int index, uint8_t* dst, int stride);
 
 private:
     // Image info

@@ -63,38 +63,42 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     return true;
 }
 
-void WebPDecoder::getFrame(int /*index*/, uint8_t* dst, int stride) {
+bool WebPDecoder::getFrame(int /*index*/, uint8_t* dst, int stride) {
     if (!has_animation_) {
         if (!has_alpha_) {
             uint8_t* pixels = WebPDecodeBGR(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
-            if (pixels) {
-                uint8_t* d = dst + (height_ - 1) * stride;
-                for (int y = 0; y < height_; y++) {
-                    memcpy(d, pixels + y * width_ * 3, width_ * 3);
-                    d -= stride;
-                }
-                WebPFree(pixels);
+            if (!pixels) {
+                OutputDebugStringA("WebPDecoder::getFrame: WebPDecodeBGR FAILED");
+                return false;
             }
+            uint8_t* d = dst + (height_ - 1) * stride;
+            for (int y = 0; y < height_; y++) {
+                memcpy(d, pixels + y * width_ * 3, width_ * 3);
+                d -= stride;
+            }
+            WebPFree(pixels);
         } else {
             uint8_t* pixels = WebPDecodeBGRA(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
-            if (pixels) {
-                compositeBGRAtoBGR(pixels, dst, stride);
-                WebPFree(pixels);
+            if (!pixels) {
+                OutputDebugStringA("WebPDecoder::getFrame: WebPDecodeBGRA FAILED");
+                return false;
             }
+            compositeBGRAtoBGR(pixels, dst, stride);
+            WebPFree(pixels);
         }
     } else {
-        if (!ensureAnimDecoder()) {
-            return;
-        }
+        if (!ensureAnimDecoder())
+            return false;
 
         uint8_t* pixels = nullptr;
         int timestamp = 0;
-        if (WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
-            compositeBGRAtoBGR(pixels, dst, stride);
-        } else {
+        if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
             OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED");
+            return false;
         }
+        compositeBGRAtoBGR(pixels, dst, stride);
     }
+    return true;
 }
 
 bool WebPDecoder::ensureAnimDecoder() {
