@@ -5,6 +5,8 @@
 #include "res/resource.h"
 #include "WebPDecoder.h"
 
+#define WEBP_TRACE 0
+
 HMODULE WebPlugin::g_hModule = NULL;
 
 static bool SetRegStringIfChanged(HKEY root, const char* subKey, const char* value)
@@ -57,7 +59,7 @@ WebPlugin::WebPlugin()
 :   m_FormatInfo {
         .dwFlags = 0,
         .dwID = MAKE_FORMATID('W', 'E', 'B', 'P'),
-        .szName = "MasterZ / oiramario",
+        .szName = "Google WebP Image",
         .szNameShort = "WEBP",
         .pszExtList = (char*)"WEBP\0\0",
         .szDefExt = "WEBP",
@@ -74,6 +76,8 @@ WebPlugin::WebPlugin()
         .pFormatInfo = &m_FormatInfo
     }
 {
+    // ViewerSharpen = 0 - "Sharpen subsampled images" freezes large
+    // animated images on the last frame during playback.
     {
         HKEY hKey;
         if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\ACD Systems\\ACDSee Pro\\50",
@@ -85,6 +89,25 @@ WebPlugin::WebPlugin()
             if (needsWrite) {
                 DWORD zero = 0;
                 RegSetValueExA(hKey, "ViewerSharpen", 0, REG_DWORD,
+                               (const BYTE*)&zero, sizeof(zero));
+            }
+            RegCloseKey(hKey);
+        }
+    }
+
+    // ViewerSSReadAhead = 0 - Pre-decoding the next animation runs out
+    // of memory in a 32-bit process (2 GB virtual address space).
+    {
+        HKEY hKey;
+        if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\ACD Systems\\ACDSee Pro\\50",
+                0, KEY_QUERY_VALUE | KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+            DWORD current = 0, type = 0, size = sizeof(current);
+            LSTATUS r = RegQueryValueExA(hKey, "ViewerSSReadAhead", NULL, &type,
+                                         (LPBYTE)&current, &size);
+            bool needsWrite = (r != ERROR_SUCCESS) || (type != REG_DWORD) || (current != 0);
+            if (needsWrite) {
+                DWORD zero = 0;
+                RegSetValueExA(hKey, "ViewerSSReadAhead", 0, REG_DWORD,
                                (const BYTE*)&zero, sizeof(zero));
             }
             RegCloseKey(hKey);
@@ -124,6 +147,7 @@ void WebPlugin::ShowPlugInDialog(HWND hWndParent)
 
 int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
 {
+#if WEBP_TRACE
     {
         char buf[512];
         sprintf_s(buf, "WebPlugin::OpenImage: dwFlags=0x%lX pszFN=%s pBuf=%p dwLen=%lu pfFillBuffer=%p pParam=%p",
@@ -135,6 +159,7 @@ int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
                   psi->pParam);
         OutputDebugStringA(buf);
     }
+#endif
     if (!psi || !phs) {
         OutputDebugStringA("WebPlugin::OpenImage: psi or phs is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
@@ -159,6 +184,7 @@ int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
     }
 
     *phs = decoder;
+#if WEBP_TRACE
     {
         char buf[256];
         sprintf_s(buf, "WebPlugin::OpenImage: -> hs=%p (anim=%d frames=%d %dx%d)",
@@ -166,16 +192,19 @@ int WebPlugin::OpenImage(ID_SourceInfo* psi, ID_StateHdl* phs)
                   decoder->getWidth(), decoder->getHeight());
         OutputDebugStringA(buf);
     }
+#endif
     return IDE_OK;
 }
 
 int WebPlugin::CloseImage(ID_StateHdl hs)
 {
+#if WEBP_TRACE
     {
         char buf[128];
         sprintf_s(buf, "WebPlugin::CloseImage: hs=%p", hs);
         OutputDebugStringA(buf);
     }
+#endif
     if (hs)
     {
         WebPDecoder* decoder = (WebPDecoder*)hs;
@@ -187,11 +216,13 @@ int WebPlugin::CloseImage(ID_StateHdl hs)
 
 int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
 {
+#if WEBP_TRACE
     {
         char buf[128];
         sprintf_s(buf, "WebPlugin::GetImageInfo: hs=%p", hs);
         OutputDebugStringA(buf);
     }
+#endif
     if (!hs) {
         OutputDebugStringA("WebPlugin::GetImageInfo: hs is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
@@ -217,11 +248,13 @@ int WebPlugin::GetImageInfo(ID_StateHdl hs, ID_ImageInfo* pii)
 
 int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
 {
+#if WEBP_TRACE
     {
         char buf[128];
         sprintf_s(buf, "WebPlugin::GetPageInfo: hs=%p iPage=%d", hs, iPage);
         OutputDebugStringA(buf);
     }
+#endif
     if (!hs)
     {
         OutputDebugStringA("WebPlugin::GetPageInfo: hs is NULL -> IDE_InvalidParam");
@@ -230,9 +263,11 @@ int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
     WebPDecoder* decoder = (WebPDecoder*)hs;
     int nPages = decoder->getFrameCount();
     if (iPage < 0 || iPage >= nPages) {
+#if WEBP_TRACE
         char buf[128];
         sprintf_s(buf, "WebPlugin::GetPageInfo: iPage=%d out of range [0,%d) -> IDE_NoPage", iPage, nPages);
         OutputDebugStringA(buf);
+#endif
         return IDE_NoPage;
     }
 
@@ -249,12 +284,14 @@ int WebPlugin::GetPageInfo(ID_StateHdl hs, int iPage, ID_PageInfo* ppi)
 
 int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 {
+#if WEBP_TRACE
     {
         char buf[256];
         sprintf_s(buf, "WebPlugin::PageDecode: hs=%p nPage=%d nWidth=%d nHeight=%d dwFlags=0x%lX quality=%d",
                   hs, pdp->nPage, pdp->nWidth, pdp->nHeight, pdp->dwFlags, pdp->quality);
         OutputDebugStringA(buf);
     }
+#endif
     if (!hs || !pdp || !pio) {
         OutputDebugStringA("WebPlugin::PageDecode: hs, pdp, or pio is NULL -> IDE_InvalidParam");
         return IDE_InvalidParam;
@@ -263,9 +300,11 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
     WebPDecoder* decoder = (WebPDecoder*)hs;
     int nPages = decoder->getFrameCount();
     if (pdp->nPage < 0 || pdp->nPage >= nPages) {
+#if WEBP_TRACE
         char buf[128];
         sprintf_s(buf, "WebPlugin::PageDecode: nPage=%d out of range -> IDE_NoPage", pdp->nPage);
         OutputDebugStringA(buf);
+#endif
         return IDE_NoPage;
     }
 
@@ -275,7 +314,7 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
     const size_t imageSize = static_cast<size_t>(dstStride) * srcH;
     const size_t dibSize   = sizeof(BITMAPINFOHEADER) + imageSize;
 
-    HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED, dibSize);
+    HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, dibSize);
     if (!hDIB) {
         DWORD err = GetLastError();
         MEMORYSTATUSEX ms = {};

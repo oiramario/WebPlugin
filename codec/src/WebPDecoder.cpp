@@ -95,8 +95,12 @@ bool WebPDecoder::getFrame(int /*index*/, uint8_t* dst, int stride) {
         uint8_t* pixels = nullptr;
         int timestamp = 0;
         if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
-            OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED");
-            return false;
+            // Frames exhausted - reset and retry for animation looping.
+            WebPAnimDecoderReset(anim_decoder_);
+            if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
+                OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED after reset");
+                return false;
+            }
         }
         compositeBGRAtoBGR(pixels, dst, stride);
     }
