@@ -5,8 +5,6 @@
 #include "res/resource.h"
 #include "WebPDecoder.h"
 
-#define WEBP_TRACE 0
-
 HMODULE WebPlugin::g_hModule = NULL;
 
 static bool SetRegStringIfChanged(HKEY root, const char* subKey, const char* value)
@@ -308,8 +306,6 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
         return IDE_NoPage;
     }
 
-    const int srcW = decoder->getWidth();
-    const int srcH = decoder->getHeight();
     const auto [dstW, dstH] = decoder->resolveOutputSize(pdp->nWidth, pdp->nHeight);
     const int dstStride  = ((dstW * 3 + 3) / 4) * 4;
     const size_t imageSize = static_cast<size_t>(dstStride) * dstH;
@@ -346,9 +342,7 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     uint8_t* pDst = reinterpret_cast<uint8_t*>(hDIB) + sizeof(BITMAPINFOHEADER);
 
-    const bool scaled = (dstW != srcW || dstH != srcH);
-    const bool ok = scaled ? decoder->getFrameScale(pdp->nPage, pDst, dstStride, dstW, dstH)
-                           : decoder->getFrameOrig(pdp->nPage, pDst, dstStride);
+    const bool ok = decoder->getFrame(pdp->nPage, pDst, dstStride, dstW, dstH);
     if (!ok) {
         GlobalFree(hDIB);
         OutputDebugStringA("WebPlugin::PageDecode: getFrame FAILED -> IDE_CorruptData");

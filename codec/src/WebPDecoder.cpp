@@ -66,27 +66,47 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
 }
 
 std::pair<int,int> WebPDecoder::resolveOutputSize(int reqW, int reqH) const {
-    if (has_animation_ || reqW <= 0 || reqH <= 0)
+    if (reqW <= 0 || reqH <= 0)
         return {width_, height_};
-    // use_scaling yields net benefit only when target area is below 49% of original
-    // (breakeven at ~70% linear scale; 0.7² ≈ 0.49).
-    if ((int64_t)reqW * reqH >= (int64_t)width_ * height_ * 49 / 100)
+    // use_scaling yields net benefit only when target area is below 55% of original
+    // (breakeven at ~74% linear scale; 0.74^2 ~= 0.55).
+    if ((int64_t)reqW * reqH >= (int64_t)width_ * height_ * 55 / 100)
         return {width_, height_};
     return {reqW, reqH};
 }
 
-bool WebPDecoder::getFrameOrig(int index, uint8_t* dst, int stride) {
+bool WebPDecoder::getFrame(int index, uint8_t* dst, int stride, int outW, int outH) {
     if (index < 0 || index >= total_frames_)
         return false;
+
+    const bool scaling = (outW != width_ || outH != height_);
+#if WEBP_TRACE
+    {
+        char buf[160];
+        sprintf_s(buf, "WebPDecoder::getFrame[%d] %s %s %s -> %dx%d",
+                  index,
+                  has_animation_ ? "anim" : "static",
+                  has_alpha_     ? "alpha" : "noalpha",
+                  scaling        ? "scale" : "orig",
+                  outW, outH);
+        OutputDebugStringA(buf);
+    }
+#endif
 
     if (!has_animation_) {
         WebPDecoderConfig config;
         WebPInitDecoderConfig(&config);
+        config.options.use_threads  = 1;
+        if (scaling) {
+            config.options.use_scaling   = 1;
+            config.options.scaled_width  = outW;
+            config.options.scaled_height = outH;
+        }
         if (!has_alpha_) {
             config.output.colorspace         = MODE_BGR;
-            config.output.u.RGBA.rgba        = dst + (size_t)(height_ - 1) * stride;
+            config.output.u.RGBA.rgba        = dst + (size_t)(outH - 1) * stride;
             config.output.u.RGBA.stride      = -stride;
-            config.output.u.RGBA.size        = (size_t)stride * height_;
+            config.output.u.RGBA.size        = (size_t)stride * outH;
             config.output.is_external_memory = 1;
             VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
             WebPFreeDecBuffer(&config.output);
@@ -102,11 +122,11 @@ bool WebPDecoder::getFrameOrig(int index, uint8_t* dst, int stride) {
                 OutputDebugStringA("WebPDecoder::getFrame: WebPDecode FAILED");
                 return false;
             }
-            compositeBGRAtoBGR(config.output.u.RGBA.rgba, dst, stride, width_, height_);
+            compositeBGRAtoBGR(config.output.u.RGBA.rgba, dst, stride, outW, outH);
             WebPFreeDecBuffer(&config.output);
         }
     } else {
-        if (!ensureAnimDecoder())
+        if (!ensureAnimDecoder(scaling ? outW : 0, scaling ? outH : 0))
             return false;
 
         if (index == 0)
@@ -118,75 +138,26 @@ bool WebPDecoder::getFrameOrig(int index, uint8_t* dst, int stride) {
             OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED");
             return false;
         }
-        compositeBGRAtoBGR(pixels, dst, stride, width_, height_);
+        compositeBGRAtoBGR(pixels, dst, stride, outW, outH);
     }
     return true;
 }
 
-bool WebPDecoder::getFrameOrigSlow(int index, uint8_t* dst, int stride) {
-    if (index < 0 || index >= total_frames_) return false;
-    if (has_animation_ || has_alpha_) return false;
-
-    WebPDecoderConfig config;
-    WebPInitDecoderConfig(&config);
-    config.output.colorspace = MODE_BGR;
-    VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
-    if (st != VP8_STATUS_OK) {
-        WebPFreeDecBuffer(&config.output);
+bool WebPDecoder::ensureAnimDecoder(int scaleW, int scaleH) {
+    if (anim_decoder_) {
+        if (anim_scale_w_ == scaleW && anim_scale_h_ == scaleH)
+            return true;
+        // Scale mismatch: caller changed dimensions mid-stream, which is a
+        // programming error. Don't silently delete and recreate.
         return false;
     }
-    const uint8_t* src = config.output.u.RGBA.rgba;
-    const int src_stride = config.output.u.RGBA.stride;
-    for (int y = 0; y < height_; y++)
-        memcpy(dst + (size_t)(height_ - 1 - y) * stride,
-               src + (size_t)y * src_stride, (size_t)width_ * 3);
-    WebPFreeDecBuffer(&config.output);
-    return true;
-}
-
-bool WebPDecoder::getFrameScale(int index, uint8_t* dst, int stride, int outW, int outH) {
-    if (index < 0 || index >= total_frames_)
-        return false;
-
-    WebPDecoderConfig config;
-    WebPInitDecoderConfig(&config);
-    config.options.use_scaling   = 1;
-    config.options.scaled_width  = outW;
-    config.options.scaled_height = outH;
-
-    if (!has_alpha_) {
-        config.output.colorspace         = MODE_BGR;
-        config.output.u.RGBA.rgba        = dst + (size_t)(outH - 1) * stride;
-        config.output.u.RGBA.stride      = -stride;
-        config.output.u.RGBA.size        = (size_t)stride * outH;
-        config.output.is_external_memory = 1;
-        VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
-        WebPFreeDecBuffer(&config.output);
-        if (st != VP8_STATUS_OK) {
-            OutputDebugStringA("WebPDecoder::getFrame scaled: WebPDecode FAILED");
-            return false;
-        }
-    } else {
-        config.output.colorspace = MODE_BGRA;
-        VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
-        if (st != VP8_STATUS_OK) {
-            WebPFreeDecBuffer(&config.output);
-            OutputDebugStringA("WebPDecoder::getFrame scaled: WebPDecode FAILED");
-            return false;
-        }
-        compositeBGRAtoBGR(config.output.u.RGBA.rgba, dst, stride, outW, outH);
-        WebPFreeDecBuffer(&config.output);
-    }
-    return true;
-}
-
-bool WebPDecoder::ensureAnimDecoder() {
-    if (anim_decoder_) return true;
 
     WebPAnimDecoderOptions options;
     WebPAnimDecoderOptionsInit(&options);
     options.color_mode = MODE_BGRA;
     options.use_threads = 1;
+    options.scaled_width = scaleW;
+    options.scaled_height = scaleH;
 
     WebPData webp_data = {src_bytes_.data(), src_bytes_.size()};
     anim_decoder_ = WebPAnimDecoderNew(&webp_data, &options);
@@ -195,6 +166,8 @@ bool WebPDecoder::ensureAnimDecoder() {
         return false;
     }
 
+    anim_scale_w_ = scaleW;
+    anim_scale_h_ = scaleH;
     return true;
 }
 

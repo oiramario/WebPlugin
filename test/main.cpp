@@ -40,10 +40,6 @@ static void runNormal(WebPlugin& plugin, ID_StateHdl hs,
     double msPageDecode = 0, msFree = 0;
     int fails = 0;
 
-    // Retrieve the underlying decoder for sub-phase stats
-    // (cast is safe: OpenImage stores WebPDecoder* as ID_StateHdl)
-    WebPDecoder* decoder = static_cast<WebPDecoder*>(hs);
-
     for (int i = 0; i < nFrames; i++) {
         ID_DecodeParam dp;
         dp.nPage = i;
@@ -83,28 +79,6 @@ static void runNormal(WebPlugin& plugin, ID_StateHdl hs,
         msAlloc += toMs(t0, t1);
         if (h) GlobalFree(h);
     }
-
-    // ── Sub-phase breakdown ─────────────────────────────────────────────────
-    const auto& fs = decoder->getFrameStats();
-    double msGetNext   = fs.usGetNext   / 1000.0;
-    double msComposite = fs.usComposite / 1000.0;
-    double msGetFrame  = msGetNext + msComposite;
-    double msPageDecodeHeader = msPageDecode - msAlloc - msGetFrame; // BITMAPINFOHEADER setup
-
-    printf("\n  PageDecode breakdown (%d frames):\n", nFrames);
-    printf("  %-30s %8s   %s\n", "Sub-phase", "Total", "Avg/frame");
-    printf("  %s\n", std::string(58, '-').c_str());
-    auto row = [&](const char* label, double total) {
-        printf("  %-30s %8.3f ms  %.4f ms\n", label, total, total / nFrames);
-    };
-    row("GlobalAlloc",              msAlloc);
-    row("  WebPAnimDecoderGetNext", msGetNext);
-    row("  compositeBGRAtoBGR",     msComposite);
-    row("  getFrame total",         msGetFrame);
-    row("  BITMAPINFOHEADER setup", msPageDecodeHeader);
-    printf("  %s\n", std::string(58, '-').c_str());
-    row("IDP_PageDecode total",     msPageDecode);
-    row("GlobalFree",               msFree);
 
     if (fails) printf("  WARN: %d frame(s) PageDecode failed\n", fails);
 }

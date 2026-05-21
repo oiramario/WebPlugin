@@ -257,7 +257,9 @@ struct WebPAnimDecoderOptions {
   // MODE_RGBA, MODE_BGRA, MODE_rgbA and MODE_bgrA.
   WEBP_CSP_MODE color_mode;
   int use_threads;           // If true, use multi-threaded decoding.
-  uint32_t padding[7];       // Padding for later use.
+  int scaled_width;          // If > 0, decode animation at this width (internal scaling).
+  int scaled_height;         // If > 0, decode animation at this height.
+  uint32_t padding[5];       // Padding for later use.
 };
 
 // Internal, version-checked, entry point.

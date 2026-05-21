@@ -26,6 +26,10 @@
 
 #define NUM_CHANNELS 4
 
+// Scale a full-res dimension down to the scaled canvas.
+#define SCALE_DIM(val, full, scaled) \
+    ((int)((unsigned)(val) * (unsigned)(scaled) / (unsigned)(full)))
+
 // Channel extraction from a uint32_t representation of a uint8_t RGBA/BGRA
 // buffer.
 #ifdef WORDS_BIGENDIAN
@@ -54,11 +58,15 @@ struct WebPAnimDecoder {
   int prev_frame_was_keyframe;     // True if previous frame was a keyframe.
   int next_frame;                  // Index of the next frame to be decoded
                                    // (starting from 1).
+  int out_canvas_w;                // Scaled canvas width (0 = no scaling).
+  int out_canvas_h;                // Scaled canvas height (0 = no scaling).
 };
 
 static void DefaultDecoderOptions(WebPAnimDecoderOptions* const dec_options) {
   dec_options->color_mode = MODE_RGBA;
   dec_options->use_threads = 0;
+  dec_options->scaled_width = 0;
+  dec_options->scaled_height = 0;
 }
 
 int WebPAnimDecoderOptionsInitInternal(WebPAnimDecoderOptions* dec_options,
@@ -92,6 +100,13 @@ WEBP_NODISCARD static int ApplyDecoderOptions(
   config->output.colorspace = mode;
   config->output.is_external_memory = 1;
   config->options.use_threads = dec_options->use_threads;
+  dec->out_canvas_w = 0;
+  dec->out_canvas_h = 0;
+  if (dec_options->scaled_width > 0 && dec_options->scaled_height > 0) {
+    dec->out_canvas_w = dec_options->scaled_width;
+    dec->out_canvas_h = dec_options->scaled_height;
+    config->options.use_scaling = 1;
+  }
   // Note: config->output.u.RGBA is set at the time of decoding each frame.
   return 1;
 }
@@ -134,13 +149,19 @@ WebPAnimDecoder* WebPAnimDecoderNewInternal(
   dec->info.bgcolor = WebPDemuxGetI(dec->demux, WEBP_FF_BACKGROUND_COLOR);
   dec->info.frame_count = WebPDemuxGetI(dec->demux, WEBP_FF_FRAME_COUNT);
 
-  // Note: calloc() because we fill frame with zeroes as well.
-  dec->curr_frame = (uint8_t*)WebPSafeCalloc(
-      dec->info.canvas_width * NUM_CHANNELS, dec->info.canvas_height);
-  if (dec->curr_frame == NULL) goto Error;
-  dec->prev_frame_disposed = (uint8_t*)WebPSafeCalloc(
-      dec->info.canvas_width * NUM_CHANNELS, dec->info.canvas_height);
-  if (dec->prev_frame_disposed == NULL) goto Error;
+  {
+    const int buf_w = dec->out_canvas_w > 0 ? dec->out_canvas_w
+                                            : (int)dec->info.canvas_width;
+    const int buf_h = dec->out_canvas_h > 0 ? dec->out_canvas_h
+                                            : (int)dec->info.canvas_height;
+    // Note: calloc() because we fill frame with zeroes as well.
+    dec->curr_frame = (uint8_t*)WebPSafeCalloc(
+        buf_w * NUM_CHANNELS, buf_h);
+    if (dec->curr_frame == NULL) goto Error;
+    dec->prev_frame_disposed = (uint8_t*)WebPSafeCalloc(
+        buf_w * NUM_CHANNELS, buf_h);
+    if (dec->prev_frame_disposed == NULL) goto Error;
+  }
 
   WebPAnimDecoderReset(dec);
   return dec;
@@ -333,6 +354,7 @@ int WebPAnimDecoderGetNext(WebPAnimDecoder* dec,
   WebPIterator iter;
   uint32_t width;
   uint32_t height;
+  int out_w, out_h;
   int is_key_frame;
   int timestamp;
   BlendRowFunc blend_row;
@@ -342,6 +364,8 @@ int WebPAnimDecoderGetNext(WebPAnimDecoder* dec,
 
   width = dec->info.canvas_width;
   height = dec->info.canvas_height;
+  out_w = dec->out_canvas_w > 0 ? dec->out_canvas_w : (int)width;
+  out_h = dec->out_canvas_h > 0 ? dec->out_canvas_h : (int)height;
   blend_row = dec->blend_func;
 
   // Get compressed frame.
@@ -354,12 +378,12 @@ int WebPAnimDecoderGetNext(WebPAnimDecoder* dec,
   is_key_frame = IsKeyFrame(&iter, &dec->prev_iter,
                             dec->prev_frame_was_keyframe, width, height);
   if (is_key_frame) {
-    if (!ZeroFillCanvas(dec->curr_frame, width, height)) {
+    if (!ZeroFillCanvas(dec->curr_frame, out_w, out_h)) {
       goto Error;
     }
   } else {
     if (!CopyCanvas(dec->prev_frame_disposed, dec->curr_frame,
-                    width, height)) {
+                    out_w, out_h)) {
       goto Error;
     }
   }
@@ -368,13 +392,20 @@ int WebPAnimDecoderGetNext(WebPAnimDecoder* dec,
   {
     const uint8_t* in = iter.fragment.bytes;
     const size_t in_size = iter.fragment.size;
-    const uint32_t stride = width * NUM_CHANNELS;  // at most 25 + 2 bits
-    const uint64_t out_offset = (uint64_t)iter.y_offset * stride +
-                                (uint64_t)iter.x_offset * NUM_CHANNELS;  // 53b
-    const uint64_t size = (uint64_t)iter.height * stride;  // at most 25 + 27b
+    const int x_off  = SCALE_DIM(iter.x_offset, width, out_w);
+    const int y_off  = SCALE_DIM(iter.y_offset, height, out_h);
+    const int frm_w  = SCALE_DIM(iter.width, width, out_w);
+    const int frm_h  = SCALE_DIM(iter.height, height, out_h);
+    const uint32_t stride = (uint32_t)out_w * NUM_CHANNELS;
+    const uint64_t out_offset = (uint64_t)y_off * stride +
+                                (uint64_t)x_off * NUM_CHANNELS;
+    const uint64_t size = (uint64_t)frm_h * stride;
     WebPDecoderConfig* const config = &dec->config;
     WebPRGBABuffer* const buf = &config->output.u.RGBA;
     if ((size_t)size != size) goto Error;
+
+    config->options.scaled_width  = frm_w;
+    config->options.scaled_height = frm_h;
     buf->stride = (int)stride;
     buf->size = (size_t)size;
     buf->rgba = dec->curr_frame + out_offset;
@@ -390,37 +421,27 @@ int WebPAnimDecoderGetNext(WebPAnimDecoder* dec,
   // that pixel in the previous frame if blending method of is WEBP_MUX_BLEND.
   if (iter.frame_num > 1 && iter.blend_method == WEBP_MUX_BLEND &&
       !is_key_frame) {
+    const int x_off  = SCALE_DIM(iter.x_offset, width, out_w);
+    const int y_off  = SCALE_DIM(iter.y_offset, height, out_h);
+    const int frm_w  = SCALE_DIM(iter.width, width, out_w);
+    const int frm_h  = SCALE_DIM(iter.height, height, out_h);
     if (dec->prev_iter.dispose_method == WEBP_MUX_DISPOSE_NONE) {
       int y;
       // Blend transparent pixels with pixels in previous canvas.
-      for (y = 0; y < iter.height; ++y) {
-        const size_t offset =
-            (iter.y_offset + y) * width + iter.x_offset;
+      for (y = 0; y < frm_h; ++y) {
+        const size_t offset = (y_off + y) * out_w + x_off;
         blend_row((uint32_t*)dec->curr_frame + offset,
-                  (uint32_t*)dec->prev_frame_disposed + offset, iter.width);
+                  (uint32_t*)dec->prev_frame_disposed + offset, frm_w);
       }
     } else {
       int y;
-      assert(dec->prev_iter.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND);
-      // We need to blend a transparent pixel with its value just after
-      // initialization. That is, blend it with:
-      // * Fully transparent pixel if it belongs to prevRect <-- No-op.
-      // * The pixel in the previous canvas otherwise <-- Need alpha-blending.
-      for (y = 0; y < iter.height; ++y) {
-        const int canvas_y = iter.y_offset + y;
-        int left1, width1, left2, width2;
-        FindBlendRangeAtRow(&iter, &dec->prev_iter, canvas_y, &left1, &width1,
-                            &left2, &width2);
-        if (width1 > 0) {
-          const size_t offset1 = canvas_y * width + left1;
-          blend_row((uint32_t*)dec->curr_frame + offset1,
-                    (uint32_t*)dec->prev_frame_disposed + offset1, width1);
-        }
-        if (width2 > 0) {
-          const size_t offset2 = canvas_y * width + left2;
-          blend_row((uint32_t*)dec->curr_frame + offset2,
-                    (uint32_t*)dec->prev_frame_disposed + offset2, width2);
-        }
+      // DISPOSE_BACKGROUND: prev_frame_disposed is already zeroed inside the
+      // previous frame rectangle, so blending src over transparent inside that
+      // rect is a no-op. Simply blend the full frame region at scaled res.
+      for (y = 0; y < frm_h; ++y) {
+        const size_t offset = (y_off + y) * out_w + x_off;
+        blend_row((uint32_t*)dec->curr_frame + offset,
+                  (uint32_t*)dec->prev_frame_disposed + offset, frm_w);
       }
     }
   }
@@ -430,13 +451,17 @@ int WebPAnimDecoderGetNext(WebPAnimDecoder* dec,
   WebPDemuxReleaseIterator(&dec->prev_iter);
   dec->prev_iter = iter;
   dec->prev_frame_was_keyframe = is_key_frame;
-  if (!CopyCanvas(dec->curr_frame, dec->prev_frame_disposed, width, height)) {
+  if (!CopyCanvas(dec->curr_frame, dec->prev_frame_disposed, out_w, out_h)) {
     goto Error;
   }
   if (dec->prev_iter.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND) {
-    ZeroFillFrameRect(dec->prev_frame_disposed, width * NUM_CHANNELS,
-                      dec->prev_iter.x_offset, dec->prev_iter.y_offset,
-                      dec->prev_iter.width, dec->prev_iter.height);
+    const int pw = (int)dec->prev_iter.width;
+    const int ph = (int)dec->prev_iter.height;
+    ZeroFillFrameRect(dec->prev_frame_disposed, out_w * NUM_CHANNELS,
+                      SCALE_DIM(dec->prev_iter.x_offset, width, out_w),
+                      SCALE_DIM(dec->prev_iter.y_offset, height, out_h),
+                      SCALE_DIM(pw, width, out_w),
+                      SCALE_DIM(ph, height, out_h));
   }
   ++dec->next_frame;
 
