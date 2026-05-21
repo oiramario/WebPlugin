@@ -65,44 +65,117 @@ bool WebPDecoder::decode(std::span<const uint8_t> bytes) {
     return true;
 }
 
-bool WebPDecoder::getFrame(int /*index*/, uint8_t* dst, int stride) {
+std::pair<int,int> WebPDecoder::resolveOutputSize(int reqW, int reqH) const {
+    if (has_animation_ || reqW <= 0 || reqH <= 0)
+        return {width_, height_};
+    // use_scaling yields net benefit only when target area is below 49% of original
+    // (breakeven at ~70% linear scale; 0.7² ≈ 0.49).
+    if ((int64_t)reqW * reqH >= (int64_t)width_ * height_ * 49 / 100)
+        return {width_, height_};
+    return {reqW, reqH};
+}
+
+bool WebPDecoder::getFrameOrig(int index, uint8_t* dst, int stride) {
+    if (index < 0 || index >= total_frames_)
+        return false;
+
     if (!has_animation_) {
+        WebPDecoderConfig config;
+        WebPInitDecoderConfig(&config);
         if (!has_alpha_) {
-            uint8_t* pixels = WebPDecodeBGR(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
-            if (!pixels) {
-                OutputDebugStringA("WebPDecoder::getFrame: WebPDecodeBGR FAILED");
+            config.output.colorspace         = MODE_BGR;
+            config.output.u.RGBA.rgba        = dst + (size_t)(height_ - 1) * stride;
+            config.output.u.RGBA.stride      = -stride;
+            config.output.u.RGBA.size        = (size_t)stride * height_;
+            config.output.is_external_memory = 1;
+            VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
+            WebPFreeDecBuffer(&config.output);
+            if (st != VP8_STATUS_OK) {
+                OutputDebugStringA("WebPDecoder::getFrame: WebPDecode FAILED");
                 return false;
             }
-            uint8_t* d = dst + (height_ - 1) * stride;
-            for (int y = 0; y < height_; y++) {
-                memcpy(d, pixels + y * width_ * 3, width_ * 3);
-                d -= stride;
-            }
-            WebPFree(pixels);
         } else {
-            uint8_t* pixels = WebPDecodeBGRA(src_bytes_.data(), src_bytes_.size(), nullptr, nullptr);
-            if (!pixels) {
-                OutputDebugStringA("WebPDecoder::getFrame: WebPDecodeBGRA FAILED");
+            config.output.colorspace = MODE_BGRA;
+            VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
+            if (st != VP8_STATUS_OK) {
+                WebPFreeDecBuffer(&config.output);
+                OutputDebugStringA("WebPDecoder::getFrame: WebPDecode FAILED");
                 return false;
             }
-            compositeBGRAtoBGR(pixels, dst, stride);
-            WebPFree(pixels);
+            compositeBGRAtoBGR(config.output.u.RGBA.rgba, dst, stride, width_, height_);
+            WebPFreeDecBuffer(&config.output);
         }
     } else {
         if (!ensureAnimDecoder())
             return false;
 
+        if (index == 0)
+            WebPAnimDecoderReset(anim_decoder_);
+
         uint8_t* pixels = nullptr;
         int timestamp = 0;
         if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
-            // Frames exhausted - reset and retry for animation looping.
-            WebPAnimDecoderReset(anim_decoder_);
-            if (!WebPAnimDecoderGetNext(anim_decoder_, &pixels, &timestamp)) {
-                OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED after reset");
-                return false;
-            }
+            OutputDebugStringA("WebPDecoder::getFrame: WebPAnimDecoderGetNext FAILED");
+            return false;
         }
-        compositeBGRAtoBGR(pixels, dst, stride);
+        compositeBGRAtoBGR(pixels, dst, stride, width_, height_);
+    }
+    return true;
+}
+
+bool WebPDecoder::getFrameOrigSlow(int index, uint8_t* dst, int stride) {
+    if (index < 0 || index >= total_frames_) return false;
+    if (has_animation_ || has_alpha_) return false;
+
+    WebPDecoderConfig config;
+    WebPInitDecoderConfig(&config);
+    config.output.colorspace = MODE_BGR;
+    VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
+    if (st != VP8_STATUS_OK) {
+        WebPFreeDecBuffer(&config.output);
+        return false;
+    }
+    const uint8_t* src = config.output.u.RGBA.rgba;
+    const int src_stride = config.output.u.RGBA.stride;
+    for (int y = 0; y < height_; y++)
+        memcpy(dst + (size_t)(height_ - 1 - y) * stride,
+               src + (size_t)y * src_stride, (size_t)width_ * 3);
+    WebPFreeDecBuffer(&config.output);
+    return true;
+}
+
+bool WebPDecoder::getFrameScale(int index, uint8_t* dst, int stride, int outW, int outH) {
+    if (index < 0 || index >= total_frames_)
+        return false;
+
+    WebPDecoderConfig config;
+    WebPInitDecoderConfig(&config);
+    config.options.use_scaling   = 1;
+    config.options.scaled_width  = outW;
+    config.options.scaled_height = outH;
+
+    if (!has_alpha_) {
+        config.output.colorspace         = MODE_BGR;
+        config.output.u.RGBA.rgba        = dst + (size_t)(outH - 1) * stride;
+        config.output.u.RGBA.stride      = -stride;
+        config.output.u.RGBA.size        = (size_t)stride * outH;
+        config.output.is_external_memory = 1;
+        VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
+        WebPFreeDecBuffer(&config.output);
+        if (st != VP8_STATUS_OK) {
+            OutputDebugStringA("WebPDecoder::getFrame scaled: WebPDecode FAILED");
+            return false;
+        }
+    } else {
+        config.output.colorspace = MODE_BGRA;
+        VP8StatusCode st = WebPDecode(src_bytes_.data(), src_bytes_.size(), &config);
+        if (st != VP8_STATUS_OK) {
+            WebPFreeDecBuffer(&config.output);
+            OutputDebugStringA("WebPDecoder::getFrame scaled: WebPDecode FAILED");
+            return false;
+        }
+        compositeBGRAtoBGR(config.output.u.RGBA.rgba, dst, stride, outW, outH);
+        WebPFreeDecBuffer(&config.output);
     }
     return true;
 }
@@ -131,13 +204,13 @@ int WebPDecoder::getFrameDelay(int index) {
     return frame_delays_[index];
 }
 
-void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra, uint8_t* dst_buffer, int stride) {
-    uint8_t* out = dst_buffer + (height_ - 1) * stride;
-    for (int y = 0; y < height_; y++) {
-        const uint8_t* sp = src_bgra + y * width_ * 4;
+void WebPDecoder::compositeBGRAtoBGR(const uint8_t* src_bgra, uint8_t* dst_buffer, int stride, int w, int h) {
+    uint8_t* out = dst_buffer + (size_t)(h - 1) * stride;
+    for (int y = 0; y < h; y++) {
+        const uint8_t* sp = src_bgra + (size_t)y * w * 4;
         uint8_t* dp = out;
         int cellY = y / kCheckerCell;
-        for (int x = 0; x < width_; x++) {
+        for (int x = 0; x < w; x++) {
             uint8_t a = sp[3];
             if (a == 255) {
                 dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 struct WebPAnimDecoder;
@@ -25,9 +26,20 @@ public:
     int getBitsPerSample() const { return 8; }
     int getFrameCount() const { return has_animation_ ? total_frames_ : 1; }
     int getFrameDelay(int index);
-    // Decodes frame into dst as 24-bit BGR bottom-up DIB with given stride.
-    // Returns false if the underlying decode fails (dst contents undefined).
-    bool getFrame(int index, uint8_t* dst, int stride);
+
+    // Returns the effective output size for a decode request.
+    // use_scaling yields net benefit only when target area < 49% of original
+    // (~70% linear scale). Animation and invalid requests fall back to the
+    // original size. Pass the result to the getFrame overloads below.
+    std::pair<int,int> resolveOutputSize(int reqW, int reqH) const;
+
+    // Full-resolution decode — outputs at the original width × height.
+    bool getFrameOrig(int index, uint8_t* dst, int stride);
+    // Baseline: internal alloc + manual flip (no external-memory trick). For benchmarking only.
+    bool getFrameOrigSlow(int index, uint8_t* dst, int stride);
+    // Scaled decode — outputs at outW × outH. Only valid for static images;
+    // call resolveOutputSize first to confirm scaling is beneficial.
+    bool getFrameScale(int index, uint8_t* dst, int stride, int outW, int outH);
 
 private:
     // Image info
@@ -46,7 +58,7 @@ private:
 
     // BGRA top-down → BGR bottom-up into dst,
     // translucent pixels composited against a checkerboard background.
-    void compositeBGRAtoBGR(const uint8_t* src_bgra, uint8_t* dst, int out_stride);
+    void compositeBGRAtoBGR(const uint8_t* src_bgra, uint8_t* dst, int out_stride, int w, int h);
 };
 
 #endif // WEBP_DECODER_H

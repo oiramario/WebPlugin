@@ -310,8 +310,9 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     const int srcW = decoder->getWidth();
     const int srcH = decoder->getHeight();
-    const int dstStride  = ((srcW * 3 + 3) / 4) * 4;
-    const size_t imageSize = static_cast<size_t>(dstStride) * srcH;
+    const auto [dstW, dstH] = decoder->resolveOutputSize(pdp->nWidth, pdp->nHeight);
+    const int dstStride  = ((dstW * 3 + 3) / 4) * 4;
+    const size_t imageSize = static_cast<size_t>(dstStride) * dstH;
     const size_t dibSize   = sizeof(BITMAPINFOHEADER) + imageSize;
 
     HGLOBAL hDIB = GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, dibSize);
@@ -326,7 +327,7 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
             " frame=%d/%d size=%dx%d dibSize=%zu KB"
             " availVirt=%zu MB availPhys=%zu MB LastError=%lu -> IDE_TooBig",
             pdp->nPage, nPages,
-            srcW, srcH, dibSize / 1024,
+            dstW, dstH, dibSize / 1024,
             (size_t)ms.ullAvailVirtual / (1024*1024),
             (size_t)ms.ullAvailPhys    / (1024*1024),
             err);
@@ -336,8 +337,8 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     BITMAPINFOHEADER* pBih = static_cast<BITMAPINFOHEADER*>(hDIB);
     pBih->biSize        = sizeof(BITMAPINFOHEADER);
-    pBih->biWidth       = srcW;
-    pBih->biHeight      = srcH;
+    pBih->biWidth       = dstW;
+    pBih->biHeight      = dstH;
     pBih->biPlanes      = 1;
     pBih->biBitCount    = 24;
     pBih->biCompression = BI_RGB;
@@ -345,7 +346,10 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
 
     uint8_t* pDst = reinterpret_cast<uint8_t*>(hDIB) + sizeof(BITMAPINFOHEADER);
 
-    if (!decoder->getFrame(pdp->nPage, pDst, dstStride)) {
+    const bool scaled = (dstW != srcW || dstH != srcH);
+    const bool ok = scaled ? decoder->getFrameScale(pdp->nPage, pDst, dstStride, dstW, dstH)
+                           : decoder->getFrameOrig(pdp->nPage, pDst, dstStride);
+    if (!ok) {
         GlobalFree(hDIB);
         OutputDebugStringA("WebPlugin::PageDecode: getFrame FAILED -> IDE_CorruptData");
         return IDE_CorruptData;
@@ -356,8 +360,8 @@ int WebPlugin::PageDecode(ID_StateHdl hs, ID_DecodeParam* pdp, ID_ImageOut* pio)
     pio->hemf = NULL;
     pio->rc.left = 0;
     pio->rc.top = 0;
-    pio->rc.right = srcW;
-    pio->rc.bottom = srcH;
+    pio->rc.right = dstW;
+    pio->rc.bottom = dstH;
     pio->pParamEx = NULL;
 
     return IDE_OK;
