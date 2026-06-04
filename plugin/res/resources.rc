@@ -1,0 +1,65 @@
+// -- resources.rc - Windows resource definitions for ID_WebP.apl ----------
+//
+// Version: 1.0.38
+//
+
+#define VER_MAJOR 1
+#define VER_MINOR 0
+#define VER_PATCH 38
+#define VER_STR   "1.0.38"
+
+#include "res/resource.h"
+#include <windows.h>
+
+// -- Icon -----------------------------------------------------------------
+IDI_ICON_WEBP ICON "webp.ico"
+
+// -- Version string (used in About dialog) --------------------------------
+STRINGTABLE
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+{
+    IDS_VERSION, VER_STR
+}
+
+// -- About dialog ---------------------------------------------------------
+IDD_ABOUT DIALOG 0, 0, 127, 113
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About ID_WebP"
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+FONT 9, "MS Sans Serif"
+{
+    CONTROL "OK", 1, BUTTON, BS_DEFPUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 38, 93, 50, 14
+    CONTROL "(c) 2026 MasterZ", -1, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE | WS_GROUP, 21, 57, 88, 8
+    CONTROL "WebP Image Decoder", -1, BUTTON, BS_GROUPBOX | WS_CHILD | WS_VISIBLE, 9, 8, 110, 78
+    CONTROL "Version %s", IDC_VERSION, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE | WS_GROUP, 21, 21, 88, 8
+    CONTROL IDI_ICON_WEBP, -1, STATIC, SS_ICON | WS_CHILD | WS_VISIBLE, 55, 31, 20, 20
+    CONTROL "Author: oiramario", -1, STATIC, SS_CENTER | WS_CHILD | WS_VISIBLE | WS_GROUP, 21, 72, 88, 8
+}
+
+// -- Version info block ---------------------------------------------------
+1 VERSIONINFO
+FILEVERSION    VER_MAJOR, VER_MINOR, VER_PATCH, 0
+PRODUCTVERSION VER_MAJOR, VER_MINOR, VER_PATCH, 0
+FILEOS    0x40004   ; VOS_NT_WINDOWS32
+FILETYPE  0x2       ; VFT_DLL
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "040904b0"   ; U.S. English, Unicode
+        {
+            VALUE "CompanyName",      "ACD Systems, Ltd."
+            VALUE "FileDescription",  "ID_WEBP"
+            VALUE "FileVersion",      VER_STR
+            VALUE "InternalName",     "ID_WEBP"
+            VALUE "LegalCopyright",   "Copyright \xA9 2013 ACD Systems, Ltd."
+            VALUE "OriginalFilename", "ID_WEBP.apl"
+            VALUE "ProductName",      "ID_WEBP"
+            VALUE "ProductVersion",   VER_STR
+        }
+    }
+
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x0409, 0x04B0
+    }
+}

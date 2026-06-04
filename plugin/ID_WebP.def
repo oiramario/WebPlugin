@@ -1,0 +1,17 @@
+; -- ID_WebP.def - DLL exports for ACDSee WebP plug-in ---------------------
+;
+; ACDSee resolves these functions via GetProcAddress at plug-in load time.
+; They must match the extern "C" declarations in ID_WebP.cpp.
+;
+
+LIBRARY "ID_WebP.apl"
+
+EXPORTS
+    IDP_Init
+    IDP_GetPlugInInfo
+    IDP_ShowPlugInDialog
+    IDP_OpenImage
+    IDP_CloseImage
+    IDP_GetImageInfo
+    IDP_GetPageInfo
+    IDP_PageDecode
