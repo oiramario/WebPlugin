@@ -1,9 +1,10 @@
-# ID_WebP - WebP Image Decoder Plug-in for ACDSee Pro 5
+# ID_WebP - WebP Image Decoder Plug-in for ACDSee (3.1 / Pro 5)
 
 A Win32 plug-in (`.apl` DLL) that adds native **WebP image decoding** support
-to **ACDSee Pro 5**. Implements the ACDSee IDP (Image Decoder Plug-in)
-interface using vendored [libwebp](https://chromium.googlesource.com/webm/libwebp/)
-for both static and animated WebP.
+to **ACDSee 3.1** and **ACDSee Pro 5** (both 32-bit). Implements the ACDSee
+IDP (Image Decoder Plug-in) interface using vendored
+[libwebp](https://chromium.googlesource.com/webm/libwebp/) for both static and
+animated WebP.
 
 ---
 
@@ -51,7 +52,7 @@ plugin/                  Shared library (ID_WebP.apl)
 ### Data flow
 
 ```
-ACDSee Pro
+ACDSee 3.1 / Pro 5
     | IDP_* exports
 ID_WebP.cpp (thin delegation)
     |
@@ -95,9 +96,9 @@ cmake --build build --config Release
 ### Prerequisites
 
 - **OS**: Windows (tested on Windows 10)
-- **Host**: ACDSee Pro 5 (32-bit)
+- **Host**: ACDSee 3.1 or ACDSee Pro 5 (both 32-bit)
 - **Build**: Visual Studio with C++ desktop workload, CMake >= 3.10
-- **Target**: **Win32 (x86)** -- ACDSee Pro 5 is a 32-bit process
+- **Target**: **Win32 (x86)** -- ACDSee 3.1 and Pro 5 are 32-bit processes
 
 ### Debug build
 
